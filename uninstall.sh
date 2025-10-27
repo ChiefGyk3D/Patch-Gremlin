@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Uninstall script for update-notifier system
-# This removes all components installed by setup-unattended-upgrades.sh
+# Patch Gremlin - Uninstall Script
+# Removes all installed components
+# https://github.com/ChiefGyk3D/Patch-Gremlin
 
 set -e
 

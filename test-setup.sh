@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Test script for update-notifier setup
-# This script helps verify that everything is configured correctly
+# Patch Gremlin - Test Script
+# Verifies installation and configuration
+# https://github.com/ChiefGyk3D/Patch-Gremlin
 
 set -e
 

@@ -1,6 +1,6 @@
 # Matrix Setup Guide
 
-This guide covers setting up Matrix notifications for the Debian Update Notifier.
+This guide covers setting up Matrix notifications for Patch Gremlin.
 
 ## Prerequisites
 

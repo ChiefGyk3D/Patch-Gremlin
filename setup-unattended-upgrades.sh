@@ -1,9 +1,36 @@
 #!/bin/bash
 
-# Setup script for automatic security updates on Debian Trixie with Discord/Matrix notifications
-# This script configures unattended-upgrades and integrates multi-platform notifiers
+# Patch Gremlin - Setup Script
+# Configures automatic security updates on Debian/RHEL with Discord/Matrix notifications
+# https://github.com/ChiefGyk3D/Patch-Gremlin
 
 set -e
+
+# Detect OS type
+if [[ -f /etc/os-release ]]; then
+    . /etc/os-release
+    OS_ID="${ID}"
+    OS_VERSION="${VERSION_ID}"
+    OS_LIKE="${ID_LIKE}"
+else
+    echo "Error: Cannot detect OS type. /etc/os-release not found."
+    exit 1
+fi
+
+# Determine if Debian-based or RHEL-based
+if [[ "$OS_ID" =~ ^(debian|ubuntu)$ ]] || [[ "$OS_LIKE" =~ debian ]]; then
+    OS_TYPE="debian"
+    PACKAGE_MANAGER="apt"
+elif [[ "$OS_ID" =~ ^(rhel|centos|rocky|almalinux|fedora|amzn)$ ]] || [[ "$OS_LIKE" =~ rhel|fedora ]]; then
+    OS_TYPE="rhel"
+    PACKAGE_MANAGER="dnf"
+else
+    echo "Error: Unsupported OS: $OS_ID"
+    echo "Supported: Debian, Ubuntu, RHEL, Rocky, AlmaLinux, Amazon Linux, Fedora"
+    exit 1
+fi
+
+echo "Detected OS: $OS_ID $OS_VERSION (type: $OS_TYPE)"
 
 # Load configuration from file if it exists
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,6 +44,8 @@ fi
 
 # Configuration - Set defaults for any variables not set by config.sh
 DOPPLER_DISCORD_SECRET="${DOPPLER_DISCORD_SECRET:-UPDATE_NOTIFIER_DISCORD_WEBHOOK}"
+DOPPLER_TEAMS_SECRET="${DOPPLER_TEAMS_SECRET:-UPDATE_NOTIFIER_TEAMS_WEBHOOK}"
+DOPPLER_SLACK_SECRET="${DOPPLER_SLACK_SECRET:-UPDATE_NOTIFIER_SLACK_WEBHOOK}"
 DOPPLER_MATRIX_SECRET="${DOPPLER_MATRIX_SECRET:-UPDATE_NOTIFIER_MATRIX_WEBHOOK}"
 DOPPLER_MATRIX_HOMESERVER_SECRET="${DOPPLER_MATRIX_HOMESERVER_SECRET:-UPDATE_NOTIFIER_MATRIX_HOMESERVER}"
 DOPPLER_MATRIX_USERNAME_SECRET="${DOPPLER_MATRIX_USERNAME_SECRET:-UPDATE_NOTIFIER_MATRIX_USERNAME}"
@@ -30,18 +59,119 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}Setting up automatic security updates for Debian Trixie...${NC}"
-echo -e "${BLUE}Doppler secret names:${NC}"
-echo -e "  Discord Webhook: ${YELLOW}$DOPPLER_DISCORD_SECRET${NC}"
-echo -e "  Matrix Webhook:  ${YELLOW}$DOPPLER_MATRIX_SECRET${NC}"
+# OS-specific installation functions
+install_debian_updates() {
+    echo -e "${YELLOW}Installing unattended-upgrades package...${NC}"
+    apt-get update
+    apt-get install -y unattended-upgrades apt-listchanges
+
+    echo -e "${YELLOW}Configuring unattended-upgrades...${NC}"
+    
+    # Backup existing config if it exists
+    if [[ -f /etc/apt/apt.conf.d/50unattended-upgrades ]]; then
+        cp /etc/apt/apt.conf.d/50unattended-upgrades /etc/apt/apt.conf.d/50unattended-upgrades.backup.$(date +%Y%m%d-%H%M%S)
+    fi
+
+    # Create the main unattended-upgrades configuration
+    cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
+// Automatically upgrade packages from these origins
+Unattended-Upgrade::Origins-Pattern {
+    // Security updates
+    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+    "origin=Debian,codename=${distro_codename}-security";
+    "origin=Ubuntu,archive=${distro_codename}-security,label=Ubuntu";
+};
+
+// List of packages to NOT automatically upgrade
+Unattended-Upgrade::Package-Blacklist {
+};
+
+// Automatically reboot if needed
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Automatic-Reboot-Time "03:00";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
+
+// Remove unused packages
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+
+// Logging
+Unattended-Upgrade::SyslogEnable "true";
+Unattended-Upgrade::SyslogFacility "daemon";
+Unattended-Upgrade::Verbose "true";
+EOF
+
+    # Create auto-upgrades configuration
+    cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+APT::Periodic::Verbose "2";
+EOF
+
+    echo -e "  ${GREEN}✓${NC} Configured unattended-upgrades for Debian/Ubuntu"
+}
+
+install_rhel_updates() {
+    echo -e "${YELLOW}Installing dnf-automatic package...${NC}"
+    $PACKAGE_MANAGER install -y dnf-automatic
+
+    echo -e "${YELLOW}Configuring dnf-automatic...${NC}"
+    
+    # Backup existing config if it exists
+    if [[ -f /etc/dnf/automatic.conf ]]; then
+        cp /etc/dnf/automatic.conf /etc/dnf/automatic.conf.backup.$(date +%Y%m%d-%H%M%S)
+    fi
+
+    # Configure dnf-automatic for security updates only
+    cat > /etc/dnf/automatic.conf << 'EOF'
+[commands]
+# What kind of upgrade to perform:
+# default                   = all available upgrades
+# security                  = only security upgrades
+upgrade_type = security
+random_sleep = 0
+
+# Whether updates should be downloaded when they are available
+download_updates = yes
+
+# Whether updates should be applied when they are available
+apply_updates = yes
+
+[emitters]
+# Emit via systemd (for our notification script)
+emit_via = motd
+
+[email]
+# Email settings (optional)
+email_from = root@localhost
+email_to = root
+email_host = localhost
+
+[base]
+# Use yum-conf-dir for CentOS 7 compatibility
+debuglevel = 1
+EOF
+
+    # Enable and start the timer
+    systemctl enable --now dnf-automatic.timer
+    
+    echo -e "  ${GREEN}✓${NC} Configured dnf-automatic for RHEL/Fedora/Amazon Linux"
+}
+
+echo -e "${GREEN}Setting up automatic security updates for $OS_ID...${NC}"
+echo -e "${BLUE}Doppler secret names configured:${NC}"
+echo -e "  Discord:        ${YELLOW}$DOPPLER_DISCORD_SECRET${NC}"
+echo -e "  Teams:          ${YELLOW}$DOPPLER_TEAMS_SECRET${NC}"
+echo -e "  Slack:          ${YELLOW}$DOPPLER_SLACK_SECRET${NC}"
+echo -e "  Matrix Webhook: ${YELLOW}$DOPPLER_MATRIX_SECRET${NC}"
 echo -e "  Matrix API:"
 echo -e "    - Homeserver: ${YELLOW}$DOPPLER_MATRIX_HOMESERVER_SECRET${NC}"
 echo -e "    - Username:   ${YELLOW}$DOPPLER_MATRIX_USERNAME_SECRET${NC}"
 echo -e "    - Password:   ${YELLOW}$DOPPLER_MATRIX_PASSWORD_SECRET${NC}"
 echo -e "    - Room ID:    ${YELLOW}$DOPPLER_MATRIX_ROOM_ID_SECRET${NC}"
-echo ""
-echo -e "  Discord: ${YELLOW}$DOPPLER_DISCORD_SECRET${NC}"
-echo -e "  Matrix:  ${YELLOW}$DOPPLER_MATRIX_SECRET${NC}"
 echo ""
 
 # Check if running as root
@@ -72,90 +202,14 @@ if ! doppler configure get project &>/dev/null; then
     fi
 fi
 
-# Install unattended-upgrades if not already installed
-echo -e "${YELLOW}Installing unattended-upgrades package...${NC}"
-apt-get update
-apt-get install -y unattended-upgrades apt-listchanges
-
-# Create unattended-upgrades configuration
-echo -e "${YELLOW}Configuring unattended-upgrades...${NC}"
-
-# Backup existing config if it exists
-if [[ -f /etc/apt/apt.conf.d/50unattended-upgrades ]]; then
-    cp /etc/apt/apt.conf.d/50unattended-upgrades /etc/apt/apt.conf.d/50unattended-upgrades.backup.$(date +%Y%m%d-%H%M%S)
+# Install and configure automatic updates based on OS type
+if [[ "$OS_TYPE" == "debian" ]]; then
+    install_debian_updates
+elif [[ "$OS_TYPE" == "rhel" ]]; then
+    install_rhel_updates
 fi
 
-# Create the main unattended-upgrades configuration
-cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
-// Automatically upgrade packages from these origins
-Unattended-Upgrade::Origins-Pattern {
-    // Security updates for Debian Trixie
-    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
-    "origin=Debian,codename=${distro_codename}-security";
-    
-    // You can also enable regular updates (optional)
-    // "origin=Debian,codename=${distro_codename},label=Debian";
-    // "origin=Debian,codename=${distro_codename}-updates";
-};
-
-// List of packages to NOT automatically upgrade
-Unattended-Upgrade::Package-Blacklist {
-    // Add packages here that you don't want auto-updated
-    // "vim";
-    // "nginx";
-};
-
-// Automatically reboot if needed (at specified time)
-Unattended-Upgrade::Automatic-Reboot "false";
-
-// If automatic reboot is enabled, reboot at this time
-Unattended-Upgrade::Automatic-Reboot-Time "03:00";
-
-// Automatically reboot even if users are logged in
-Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
-
-// Remove unused automatically installed kernel-related packages
-Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
-
-// Remove unused dependencies
-Unattended-Upgrade::Remove-Unused-Dependencies "true";
-
-// Automatically remove new unused dependencies after the upgrade
-Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
-
-// Send email notifications (optional, requires mail setup)
-// Unattended-Upgrade::Mail "root";
-// Unattended-Upgrade::MailReport "on-change";
-
-// Enable logging to syslog
-Unattended-Upgrade::SyslogEnable "true";
-Unattended-Upgrade::SyslogFacility "daemon";
-
-// Verbose logging
-Unattended-Upgrade::Verbose "true";
-EOF
-
-# Create auto-upgrades configuration
-echo -e "${YELLOW}Enabling automatic updates...${NC}"
-
-cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
-// Enable automatic package list updates
-APT::Periodic::Update-Package-Lists "1";
-
-// Enable automatic download of upgradeable packages
-APT::Periodic::Download-Upgradeable-Packages "1";
-
-// Enable automatic upgrade of packages
-APT::Periodic::Unattended-Upgrade "1";
-
-// Auto-clean interval (in days)
-APT::Periodic::AutocleanInterval "7";
-
-// Verbose level (0=no output, 1=some, 2=more, 3=debug)
-APT::Periodic::Verbose "2";
-EOF
-
-# Copy the Discord notifier script to the system
+# Copy the notifier script to the system
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTIFIER_SCRIPT="$SCRIPT_DIR/update-notifier.sh"
 
@@ -190,6 +244,8 @@ After=network-online.target
 [Service]
 Type=oneshot
 Environment="DOPPLER_DISCORD_SECRET=$DOPPLER_DISCORD_SECRET"
+Environment="DOPPLER_TEAMS_SECRET=$DOPPLER_TEAMS_SECRET"
+Environment="DOPPLER_SLACK_SECRET=$DOPPLER_SLACK_SECRET"
 Environment="DOPPLER_MATRIX_SECRET=$DOPPLER_MATRIX_SECRET"
 Environment="DOPPLER_MATRIX_HOMESERVER_SECRET=$DOPPLER_MATRIX_HOMESERVER_SECRET"
 Environment="DOPPLER_MATRIX_USERNAME_SECRET=$DOPPLER_MATRIX_USERNAME_SECRET"
@@ -219,17 +275,48 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
-# Alternative: Create a hook script that runs after unattended-upgrades
-echo -e "${YELLOW}Creating post-upgrade hook...${NC}"
-mkdir -p /etc/apt/apt.conf.d/
-
-cat > /etc/apt/apt.conf.d/99discord-notification << EOF
-// Run notification script after unattended-upgrades completes
-// Pass custom Doppler secret names as environment variables
+# Create post-upgrade hook (OS-specific)
+if [[ "$OS_TYPE" == "debian" ]]; then
+    echo -e "${YELLOW}Creating APT post-upgrade hook...${NC}"
+    mkdir -p /etc/apt/apt.conf.d/
+    
+    cat > /etc/apt/apt.conf.d/99patch-gremlin-notification << EOF
+// Run Patch Gremlin notification script after unattended-upgrades completes
 Dpkg::Post-Invoke {
-    "if [ -x /usr/local/bin/update-notifier.sh ]; then DOPPLER_DISCORD_SECRET='$DOPPLER_DISCORD_SECRET' DOPPLER_MATRIX_SECRET='$DOPPLER_MATRIX_SECRET' DOPPLER_MATRIX_HOMESERVER_SECRET='$DOPPLER_MATRIX_HOMESERVER_SECRET' DOPPLER_MATRIX_USERNAME_SECRET='$DOPPLER_MATRIX_USERNAME_SECRET' DOPPLER_MATRIX_PASSWORD_SECRET='$DOPPLER_MATRIX_PASSWORD_SECRET' DOPPLER_MATRIX_ROOM_ID_SECRET='$DOPPLER_MATRIX_ROOM_ID_SECRET' /usr/local/bin/update-notifier.sh || true; fi";
+    "if [ -x /usr/local/bin/update-notifier.sh ]; then DOPPLER_DISCORD_SECRET='$DOPPLER_DISCORD_SECRET' DOPPLER_TEAMS_SECRET='$DOPPLER_TEAMS_SECRET' DOPPLER_SLACK_SECRET='$DOPPLER_SLACK_SECRET' DOPPLER_MATRIX_SECRET='$DOPPLER_MATRIX_SECRET' DOPPLER_MATRIX_HOMESERVER_SECRET='$DOPPLER_MATRIX_HOMESERVER_SECRET' DOPPLER_MATRIX_USERNAME_SECRET='$DOPPLER_MATRIX_USERNAME_SECRET' DOPPLER_MATRIX_PASSWORD_SECRET='$DOPPLER_MATRIX_PASSWORD_SECRET' DOPPLER_MATRIX_ROOM_ID_SECRET='$DOPPLER_MATRIX_ROOM_ID_SECRET' /usr/local/bin/update-notifier.sh || true; fi";
 };
 EOF
+    echo -e "  ${GREEN}✓${NC} Created APT post-upgrade hook"
+    
+elif [[ "$OS_TYPE" == "rhel" ]]; then
+    echo -e "${YELLOW}Creating DNF post-upgrade hook...${NC}"
+    mkdir -p /etc/dnf/plugins/post-transaction-actions.d/
+    
+    cat > /usr/local/bin/patch-gremlin-dnf-hook.sh << 'HOOKEOF'
+#!/bin/bash
+# Patch Gremlin DNF hook - Run after DNF transactions
+if [[ -x /usr/local/bin/update-notifier.sh ]]; then
+    /usr/local/bin/update-notifier.sh || true
+fi
+HOOKEOF
+    chmod +x /usr/local/bin/patch-gremlin-dnf-hook.sh
+    
+    # Create systemd override for dnf-automatic to run our hook
+    mkdir -p /etc/systemd/system/dnf-automatic.service.d/
+    cat > /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf << EOF
+[Service]
+ExecStartPost=/usr/local/bin/patch-gremlin-dnf-hook.sh
+Environment="DOPPLER_DISCORD_SECRET=$DOPPLER_DISCORD_SECRET"
+Environment="DOPPLER_TEAMS_SECRET=$DOPPLER_TEAMS_SECRET"
+Environment="DOPPLER_SLACK_SECRET=$DOPPLER_SLACK_SECRET"
+Environment="DOPPLER_MATRIX_SECRET=$DOPPLER_MATRIX_SECRET"
+Environment="DOPPLER_MATRIX_HOMESERVER_SECRET=$DOPPLER_MATRIX_HOMESERVER_SECRET"
+Environment="DOPPLER_MATRIX_USERNAME_SECRET=$DOPPLER_MATRIX_USERNAME_SECRET"
+Environment="DOPPLER_MATRIX_PASSWORD_SECRET=$DOPPLER_MATRIX_PASSWORD_SECRET"
+Environment="DOPPLER_MATRIX_ROOM_ID_SECRET=$DOPPLER_MATRIX_ROOM_ID_SECRET"
+EOF
+    echo -e "  ${GREEN}✓${NC} Created DNF post-upgrade hook"
+fi
 
 # Reload systemd
 systemctl daemon-reload

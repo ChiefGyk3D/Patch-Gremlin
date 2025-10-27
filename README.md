@@ -1,15 +1,20 @@
-# Debian Update Notifier
+# Patch Gremlin
+<div align="center">
+  <img src="media/patch_gremlin_banner.png" alt="Patch Gremlin Banner" width="400"/>
+</div>
 
-Automated system update notifications for Debian with Discord and Matrix support. Integrates with `unattended-upgrades` to send notifications when security updates are installed.
+
+Automated system update notifications for Debian and RHEL-based systems with Discord, Microsoft Teams, Slack, and Matrix support. Integrates with `unattended-upgrades` (Debian/Ubuntu) or `dnf-automatic` (RHEL/Fedora/Amazon Linux) to send notifications when security updates are installed.
 
 ## Features
 
-- 🔔 **Multi-Platform**: Send notifications to Discord and/or Matrix
+- 🔔 **Multi-Platform**: Send notifications to Discord, Microsoft Teams, Slack, and/or Matrix (any combination!)
 - 🔒 **Secure**: Uses Doppler CLI for credential management
 - 🎨 **Configurable**: Customize Doppler secret names to avoid conflicts
 - ⚙️ **Automated**: Integrates with unattended-upgrades and systemd
 - 📊 **Informative**: Rich notifications with hostname, timestamp, and logs
 - 🔐 **Simple Auth**: Matrix uses username/password (no token generation needed)
+- 🖥️ **Multi-OS**: Supports Debian/Ubuntu and RHEL/Rocky/AlmaLinux/Amazon Linux/Fedora
 
 ## Quick Start
 
@@ -30,8 +35,18 @@ sudo doppler login
 # Setup Doppler project
 sudo doppler setup --project your-project --config your-config
 
-# Add secrets (example with custom names)
+# Add secrets for your chosen platform(s) - use any combination!
+
+# Discord (webhook URL from Discord server settings)
 doppler secrets set SYSTEM_UPDATE_DISCORD="https://discord.com/api/webhooks/..."
+
+# Microsoft Teams (webhook URL from Teams channel connectors)
+doppler secrets set SYSTEM_UPDATE_TEAMS="https://outlook.office.com/webhook/..."
+
+# Slack (webhook URL from Slack app)
+doppler secrets set SYSTEM_UPDATE_SLACK="https://hooks.slack.com/services/..."
+
+# Matrix (username/password - simpler than access tokens)
 doppler secrets set MATRIX_HOMESERVER="https://matrix.org"
 doppler secrets set MATRIX_USERNAME="youruser"  # Just username, not @user:server
 doppler secrets set MATRIX_PASSWORD="your-password"
@@ -48,7 +63,10 @@ nano config.sh
 
 Edit to match your Doppler secret names:
 ```bash
+# Configure one or more platforms (any combination works!)
 export DOPPLER_DISCORD_SECRET="SYSTEM_UPDATE_DISCORD"
+export DOPPLER_TEAMS_SECRET="SYSTEM_UPDATE_TEAMS"
+export DOPPLER_SLACK_SECRET="SYSTEM_UPDATE_SLACK"
 export DOPPLER_MATRIX_HOMESERVER_SECRET="MATRIX_HOMESERVER"
 export DOPPLER_MATRIX_USERNAME_SECRET="MATRIX_USERNAME"
 export DOPPLER_MATRIX_PASSWORD_SECRET="MATRIX_PASSWORD"
@@ -88,6 +106,30 @@ sudo /usr/local/bin/update-notifier.sh
    - Retrieves credentials from Doppler using custom secret names
    - Sends formatted notifications to configured platforms
 
+## Files Installed
+
+**All Systems:**
+```
+/usr/local/bin/update-notifier.sh          # Main notification script
+/etc/update-notifier/config.sh             # Custom secret name configuration
+/etc/systemd/system/update-notifier.service # Systemd service
+/etc/systemd/system/update-notifier.timer   # Daily timer
+```
+
+**Debian/Ubuntu:**
+```
+/etc/apt/apt.conf.d/99patch-gremlin-notification  # APT hook
+/etc/apt/apt.conf.d/50unattended-upgrades         # Security update config
+/etc/apt/apt.conf.d/20auto-upgrades               # Auto-upgrade schedule
+```
+
+**RHEL/Fedora/Amazon Linux:**
+```
+/etc/dnf/automatic.conf                                    # DNF automatic config
+/usr/local/bin/patch-gremlin-dnf-hook.sh                  # Post-transaction hook
+/etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf  # Service override
+```
+
 ## Configuration
 
 ### Doppler Secret Names
@@ -99,6 +141,8 @@ The script supports custom Doppler secret names via `config.sh`. This allows you
 
 **Default names** (if no config.sh):
 - `UPDATE_NOTIFIER_DISCORD_WEBHOOK`
+- `UPDATE_NOTIFIER_TEAMS_WEBHOOK`
+- `UPDATE_NOTIFIER_SLACK_WEBHOOK`
 - `UPDATE_NOTIFIER_MATRIX_HOMESERVER`
 - `UPDATE_NOTIFIER_MATRIX_USERNAME`
 - `UPDATE_NOTIFIER_MATRIX_PASSWORD`
@@ -107,9 +151,31 @@ The script supports custom Doppler secret names via `config.sh`. This allows you
 **Custom names** (via config.sh):
 ```bash
 export DOPPLER_DISCORD_SECRET="SYSTEM_UPDATE_DISCORD"
+export DOPPLER_TEAMS_SECRET="SYSTEM_UPDATE_TEAMS"
+export DOPPLER_SLACK_SECRET="SYSTEM_UPDATE_SLACK"
 export DOPPLER_MATRIX_HOMESERVER_SECRET="MATRIX_HOMESERVER"
 # ... etc
 ```
+
+### Messaging Platform Setup
+
+**Discord:**
+1. Go to Server Settings → Integrations → Webhooks
+2. Create webhook, copy URL
+3. Add to Doppler: `doppler secrets set SYSTEM_UPDATE_DISCORD="<webhook-url>"`
+
+**Microsoft Teams:**
+1. Go to channel → Connectors → Incoming Webhook
+2. Configure webhook, copy URL
+3. Add to Doppler: `doppler secrets set SYSTEM_UPDATE_TEAMS="<webhook-url>"`
+
+**Slack:**
+1. Create Slack app with Incoming Webhook
+2. Install to workspace, copy webhook URL
+3. Add to Doppler: `doppler secrets set SYSTEM_UPDATE_SLACK="<webhook-url>"`
+
+**Matrix:**
+See [MATRIX_SETUP.md](MATRIX_SETUP.md) for detailed instructions.
 
 ### Matrix Username Format
 
@@ -178,15 +244,52 @@ sudo ./uninstall.sh
 
 ## Requirements
 
-- Debian 12 (Bookworm) or 13 (Trixie)
+- Debian 12+ (Bookworm/Trixie) OR RHEL 8+/Rocky/AlmaLinux/Amazon Linux 2023/Fedora
 - Root/sudo access
 - Doppler CLI
 - Discord webhook URL and/or Matrix account
 
+## Supported Operating Systems
+
+**Debian-based:**
+- Debian 12 (Bookworm), 13 (Trixie)
+- Ubuntu 20.04+
+- Other Debian derivatives
+
+**RHEL-based:**
+- Red Hat Enterprise Linux 8+
+- Rocky Linux 8+
+- AlmaLinux 8+
+- Amazon Linux 2023
+- Fedora 35+
+
+## How It Works
+
+**Debian/Ubuntu:**
+1. **unattended-upgrades** automatically installs security updates
+2. **APT hook** triggers notification script after upgrades complete
+3. **systemd timer** provides backup daily notifications
+
+**RHEL/Fedora/Amazon Linux:**
+1. **dnf-automatic** automatically installs security updates
+2. **systemd service hook** triggers notification script after upgrades complete
+3. **dnf-automatic.timer** runs daily (configured by dnf-automatic)
+
+**Both systems:**
+- **Notification script**:
+  - Loads config from `/etc/update-notifier/config.sh`
+  - Retrieves credentials from Doppler using custom secret names
+  - Sends formatted notifications to configured platforms
+
 ## License
 
-MIT
+**Dual License:** MPL-2.0 OR Commercial
+
+- **Open Source Use:** Licensed under the Mozilla Public License 2.0 (MPL-2.0)
+- **Commercial Use:** Requires contacting [@ChiefGyk3D](https://github.com/ChiefGyk3D)
+  - Most requests approved free of charge with the condition that improvements be contributed back
+  - See [LICENSE](LICENSE) for full details
 
 ## Contributing
 
-Issues and pull requests welcome!
+Issues and pull requests welcome! By contributing, you agree to license your contributions under the same dual license (MPL-2.0 / Commercial).

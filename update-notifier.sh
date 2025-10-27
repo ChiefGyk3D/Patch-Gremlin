@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Multi-Platform Update Notifier with Doppler Integration
-# This script sends system update notifications to Discord and/or Matrix using credentials from Doppler
+# Patch Gremlin - Multi-Platform Update Notifier
+# Sends system update notifications to Discord and/or Matrix using credentials from Doppler
+# https://github.com/ChiefGyk3D/Patch-Gremlin
 
 # Load configuration from file if it exists
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,6 +19,8 @@ DOPPLER_MATRIX_HOMESERVER_SECRET="${DOPPLER_MATRIX_HOMESERVER_SECRET:-UPDATE_NOT
 DOPPLER_MATRIX_USERNAME_SECRET="${DOPPLER_MATRIX_USERNAME_SECRET:-UPDATE_NOTIFIER_MATRIX_USERNAME}"
 DOPPLER_MATRIX_PASSWORD_SECRET="${DOPPLER_MATRIX_PASSWORD_SECRET:-UPDATE_NOTIFIER_MATRIX_PASSWORD}"
 DOPPLER_MATRIX_ROOM_ID_SECRET="${DOPPLER_MATRIX_ROOM_ID_SECRET:-UPDATE_NOTIFIER_MATRIX_ROOM_ID}"
+DOPPLER_TEAMS_SECRET="${DOPPLER_TEAMS_SECRET:-UPDATE_NOTIFIER_TEAMS_WEBHOOK}"
+DOPPLER_SLACK_SECRET="${DOPPLER_SLACK_SECRET:-UPDATE_NOTIFIER_SLACK_WEBHOOK}"
 
 # Check if Doppler CLI is installed
 if ! command -v doppler &> /dev/null; then
@@ -27,13 +30,27 @@ if ! command -v doppler &> /dev/null; then
 fi
 
 # Configuration
-LOG_FILE="/var/log/unattended-upgrades/unattended-upgrades.log"
+# Auto-detect update log file location based on OS
+if [[ -f /var/log/unattended-upgrades/unattended-upgrades.log ]]; then
+    # Debian/Ubuntu
+    LOG_FILE="/var/log/unattended-upgrades/unattended-upgrades.log"
+elif [[ -f /var/log/dnf.log ]]; then
+    # RHEL/Fedora/Amazon Linux  
+    LOG_FILE="/var/log/dnf.log"
+elif [[ -f /var/log/yum.log ]]; then
+    # Older RHEL/CentOS
+    LOG_FILE="/var/log/yum.log"
+else
+    # Fallback
+    LOG_FILE="/var/log/unattended-upgrades/unattended-upgrades.log"
+fi
 HOSTNAME=$(hostname)
 LAST_RUN=$(date)
 
 # Retrieve webhook URLs and Matrix credentials from Doppler
-# Discord uses webhooks
 DISCORD_WEBHOOK=$(doppler secrets get "$DOPPLER_DISCORD_SECRET" --plain 2>/dev/null)
+TEAMS_WEBHOOK=$(doppler secrets get "$DOPPLER_TEAMS_SECRET" --plain 2>/dev/null)
+SLACK_WEBHOOK=$(doppler secrets get "$DOPPLER_SLACK_SECRET" --plain 2>/dev/null)
 
 # Matrix can use either webhooks OR homeserver + username + password + room ID
 MATRIX_WEBHOOK=$(doppler secrets get "$DOPPLER_MATRIX_SECRET" --plain 2>/dev/null)
@@ -55,7 +72,7 @@ elif [[ -n "$MATRIX_HOMESERVER" ]] && [[ -n "$MATRIX_USERNAME" ]] && [[ -n "$MAT
 fi
 
 # Check if at least one notification method is configured
-if [[ -z "$DISCORD_WEBHOOK" ]] && [[ "$MATRIX_CONFIGURED" == false ]]; then
+if [[ -z "$DISCORD_WEBHOOK" ]] && [[ -z "$TEAMS_WEBHOOK" ]] && [[ -z "$SLACK_WEBHOOK" ]] && [[ "$MATRIX_CONFIGURED" == false ]]; then
     echo "Error: No notification methods configured in Doppler."
     echo "Make sure you have:"
     echo "1. Run 'doppler login' to authenticate"
@@ -65,6 +82,12 @@ if [[ -z "$DISCORD_WEBHOOK" ]] && [[ "$MATRIX_CONFIGURED" == false ]]; then
     echo "   For Discord:"
     echo "   - $DOPPLER_DISCORD_SECRET (webhook URL)"
     echo ""
+    echo "   For Microsoft Teams:"
+    echo "   - $DOPPLER_TEAMS_SECRET (webhook URL)"
+    echo ""
+    echo "   For Slack:"
+    echo "   - $DOPPLER_SLACK_SECRET (webhook URL)"
+    echo ""
     echo "   For Matrix (choose one method):"
     echo "   - $DOPPLER_MATRIX_SECRET (webhook URL) OR"
     echo "   - $DOPPLER_MATRIX_HOMESERVER_SECRET (e.g., https://matrix.org)"
@@ -72,9 +95,7 @@ if [[ -z "$DISCORD_WEBHOOK" ]] && [[ "$MATRIX_CONFIGURED" == false ]]; then
     echo "   - $DOPPLER_MATRIX_PASSWORD_SECRET (Matrix account password)"
     echo "   - $DOPPLER_MATRIX_ROOM_ID_SECRET (e.g., !roomid:matrix.org)"
     echo ""
-    echo "You can customize the secret names by setting environment variables:"
-    echo "   export DOPPLER_DISCORD_SECRET='YOUR_CUSTOM_DISCORD_SECRET_NAME'"
-    echo "   export DOPPLER_MATRIX_HOMESERVER_SECRET='YOUR_CUSTOM_MATRIX_HOMESERVER_NAME'"
+    echo "You can customize the secret names by setting environment variables in config.sh"
     exit 1
 fi
 
@@ -127,6 +148,110 @@ EOF
         echo "✗ Failed to send notification to Discord (HTTP $HTTP_CODE)"
         echo "  Response: $RESPONSE_BODY"
         ERRORS="${ERRORS}Discord: HTTP $HTTP_CODE\n"
+    fi
+fi
+
+# Send to Microsoft Teams if webhook is configured
+if [[ -n "$TEAMS_WEBHOOK" ]]; then
+    echo "Sending notification to Microsoft Teams..."
+    
+    # Build Teams payload (Adaptive Card format)
+    TEAMS_PAYLOAD=$(cat <<EOF
+{
+  "@type": "MessageCard",
+  "@context": "https://schema.org/extensions",
+  "summary": "System Update Completed on $HOSTNAME",
+  "themeColor": "0078D7",
+  "title": "🔄 System Update Completed",
+  "sections": [
+    {
+      "activityTitle": "Host: **$HOSTNAME**",
+      "activitySubtitle": "Update completed at $LAST_RUN",
+      "facts": [
+        {
+          "name": "Status:",
+          "value": "Security updates applied"
+        },
+        {
+          "name": "Log File:",
+          "value": "$LOG_FILE"
+        }
+      ],
+      "text": "\`\`\`\\n$LOG_OUTPUT\\n\`\`\`"
+    }
+  ]
+}
+EOF
+    )
+
+    # Send notification to Teams
+    RESPONSE=$(curl -s -w "\n%{http_code}" -H "Content-Type: application/json" -X POST -d "$TEAMS_PAYLOAD" "$TEAMS_WEBHOOK")
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    RESPONSE_BODY=$(echo "$RESPONSE" | head -n-1)
+
+    if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
+        echo "✓ Successfully sent notification to Microsoft Teams (HTTP $HTTP_CODE)"
+        NOTIFICATION_SENT=true
+    else
+        echo "✗ Failed to send notification to Microsoft Teams (HTTP $HTTP_CODE)"
+        echo "  Response: $RESPONSE_BODY"
+        ERRORS="${ERRORS}Teams: HTTP $HTTP_CODE\n"
+    fi
+fi
+
+# Send to Slack if webhook is configured
+if [[ -n "$SLACK_WEBHOOK" ]]; then
+    echo "Sending notification to Slack..."
+    
+    # Build Slack payload (Block Kit format)
+    SLACK_PAYLOAD=$(cat <<EOF
+{
+  "text": "System Update Completed on $HOSTNAME",
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "🔄 System Update Completed"
+      }
+    },
+    {
+      "type": "section",
+      "fields": [
+        {
+          "type": "mrkdwn",
+          "text": "*Host:*\\n$HOSTNAME"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Time:*\\n$LAST_RUN"
+        }
+      ]
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Recent Log:*\\n\`\`\`$LOG_OUTPUT\`\`\`"
+      }
+    }
+  ]
+}
+EOF
+    )
+
+    # Send notification to Slack
+    RESPONSE=$(curl -s -w "\n%{http_code}" -H "Content-Type: application/json" -X POST -d "$SLACK_PAYLOAD" "$SLACK_WEBHOOK")
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    RESPONSE_BODY=$(echo "$RESPONSE" | head -n-1)
+
+    if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
+        echo "✓ Successfully sent notification to Slack (HTTP $HTTP_CODE)"
+        NOTIFICATION_SENT=true
+    else
+        echo "✗ Failed to send notification to Slack (HTTP $HTTP_CODE)"
+        echo "  Response: $RESPONSE_BODY"
+        ERRORS="${ERRORS}Slack: HTTP $HTTP_CODE\n"
     fi
 fi
 
