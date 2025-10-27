@@ -1,0 +1,42 @@
+#!/bin/bash
+
+# Configuration file for update-notifier
+# Copy this file to config.sh and customize as needed
+# Source it before running the setup script: source config.sh && sudo -E ./setup-unattended-upgrades.sh
+
+# Doppler Secret Names for Discord
+# Customize these to avoid conflicts with other programs in the same Doppler project
+export DOPPLER_DISCORD_SECRET="SYSTEM_UPDATE_DISCORD"
+
+# Doppler Secret Names for Matrix
+# Matrix supports two methods:
+# Method 1: Webhook (if you have a custom webhook integration)
+export DOPPLER_MATRIX_SECRET="SYSTEM_UPDATE_MATRIX"
+
+# Method 2: Matrix Client-Server API (recommended - requires 4 secrets)
+export DOPPLER_MATRIX_HOMESERVER_SECRET="SYSTEM_UPDATE_MATRIX_HOMESERVER"
+export DOPPLER_MATRIX_USERNAME_SECRET="SYSTEM_UPDATE_MATRIX_USERNAME"
+export DOPPLER_MATRIX_PASSWORD_SECRET="SYSTEM_UPDATE_MATRIX_PASSWORD"
+export DOPPLER_MATRIX_ROOM_ID_SECRET="SYSTEM_UPDATE_MATRIX_ROOM_ID"
+
+# Examples of custom naming:
+# export DOPPLER_DISCORD_SECRET="SYSUPDATE_DISCORD_WEBHOOK"
+# export DOPPLER_MATRIX_HOMESERVER_SECRET="SYSUPDATE_MATRIX_HOMESERVER"
+# export DOPPLER_MATRIX_USERNAME_SECRET="SYSUPDATE_MATRIX_USERNAME"
+# export DOPPLER_MATRIX_PASSWORD_SECRET="SYSUPDATE_MATRIX_PASSWORD"
+# export DOPPLER_MATRIX_ROOM_ID_SECRET="SYSUPDATE_MATRIX_ROOM_ID"
+
+# Or namespace by hostname:
+# export DOPPLER_DISCORD_SECRET="$(hostname)_UPDATE_DISCORD_WEBHOOK"
+# export DOPPLER_MATRIX_HOMESERVER_SECRET="$(hostname)_UPDATE_MATRIX_HOMESERVER"
+# export DOPPLER_MATRIX_USERNAME_SECRET="$(hostname)_UPDATE_MATRIX_USERNAME"
+# export DOPPLER_MATRIX_PASSWORD_SECRET="$(hostname)_UPDATE_MATRIX_PASSWORD"
+# export DOPPLER_MATRIX_ROOM_ID_SECRET="$(hostname)_UPDATE_MATRIX_ROOM_ID"
+
+# Or by environment:
+# export DOPPLER_DISCORD_SECRET="PROD_UPDATE_DISCORD_WEBHOOK"
+# export DOPPLER_MATRIX_HOMESERVER_SECRET="PROD_UPDATE_MATRIX_HOMESERVER"
+# export DOPPLER_MATRIX_USERNAME_SECRET="PROD_UPDATE_MATRIX_USERNAME"
+# export DOPPLER_MATRIX_PASSWORD_SECRET="PROD_UPDATE_MATRIX_PASSWORD"
+# export DOPPLER_MATRIX_ROOM_ID_SECRET="PROD_UPDATE_MATRIX_ROOM_ID"
+

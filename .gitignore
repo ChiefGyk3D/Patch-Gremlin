@@ -1,0 +1,15 @@
+# Configuration files with secrets
+config.sh
+!config.example.sh
+
+# Doppler files
+.doppler.yaml
+
+# System files
+.DS_Store
+*~
+*.swp
+*.swo
+
+# Logs
+*.log
