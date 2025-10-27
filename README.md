@@ -286,7 +286,7 @@ sudo ./uninstall.sh
 **Dual License:** MPL-2.0 OR Commercial
 
 - **Open Source Use:** Licensed under the Mozilla Public License 2.0 (MPL-2.0)
-- **Commercial Use:** Requires contacting [@ChiefGyk3D](https://github.com/ChiefGyk3D)
+- **Commercial Use:** IF planning on modifying, requires contacting [@ChiefGyk3D](https://github.com/ChiefGyk3D)
   - Most requests approved free of charge with the condition that improvements be contributed back
   - See [LICENSE](LICENSE) for full details
 
