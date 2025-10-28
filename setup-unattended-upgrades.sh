@@ -234,9 +234,9 @@ fi
 # Create systemd service for post-upgrade notification
 echo -e "${YELLOW}Creating systemd service for notifications...${NC}"
 
-cat > /etc/systemd/system/update-notifier-discord.service << EOF
+cat > /etc/systemd/system/update-notifier.service << EOF
 [Unit]
-Description=Update Notification Service (Discord/Matrix)
+Description=Update Notification Service
 After=apt-daily-upgrade.service
 Wants=network-online.target
 After=network-online.target
@@ -260,15 +260,16 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
-# Create systemd timer to trigger after apt-daily-upgrade
-cat > /etc/systemd/system/update-notifier-discord.timer << 'EOF'
+# Create systemd timer for daily notifications
+cat > /etc/systemd/system/update-notifier.timer << 'EOF'
 [Unit]
-Description=Timer for Discord Update Notifications
-After=apt-daily-upgrade.service
+Description=Timer for Update Notifications
+Requires=update-notifier.service
 
 [Timer]
-# Run 5 minutes after the apt-daily-upgrade service completes
-OnUnitActiveSec=5min
+# Run daily with randomized delay
+OnCalendar=daily
+RandomizedDelaySec=30min
 Persistent=true
 
 [Install]
