@@ -24,11 +24,13 @@ fi
 
 echo -e "${YELLOW}This will remove:${NC}"
 echo "  - Notification script (/usr/local/bin/update-notifier.sh)"
-echo "  - APT hook (/etc/apt/apt.conf.d/99discord-notification)"
+echo "  - APT/DNF hooks"
 echo "  - Systemd service and timer"
+echo "  - Configuration files (/etc/update-notifier/)"
+echo "  - Local secrets file (if present)"
 echo ""
 echo -e "${YELLOW}This will NOT remove:${NC}"
-echo "  - unattended-upgrades package (system updates will continue)"
+echo "  - unattended-upgrades/dnf-automatic package (system updates will continue)"
 echo "  - Doppler CLI or configuration"
 echo "  - Doppler secrets"
 echo ""
@@ -79,11 +81,43 @@ if [[ -f /usr/local/bin/update-notifier.sh ]]; then
     echo -e "  ${GREEN}✓${NC} Removed /usr/local/bin/update-notifier.sh"
 fi
 
+# Remove configuration directory and secrets
+if [[ -d /etc/update-notifier ]]; then
+    echo -e "${YELLOW}Removing configuration directory...${NC}"
+    if [[ -f /etc/update-notifier/secrets.conf ]]; then
+        echo -e "  ${BLUE}ℹ${NC} Removing local secrets file"
+        rm -f /etc/update-notifier/secrets.conf
+    fi
+    rm -rf /etc/update-notifier
+    echo -e "  ${GREEN}✓${NC} Removed /etc/update-notifier/"
+fi
+
 # Remove APT hook
-if [[ -f /etc/apt/apt.conf.d/99discord-notification ]]; then
+if [[ -f /etc/apt/apt.conf.d/99patch-gremlin-notification ]]; then
     echo -e "${YELLOW}Removing APT hook...${NC}"
+    rm -f /etc/apt/apt.conf.d/99patch-gremlin-notification
+    echo -e "  ${GREEN}✓${NC} Removed APT hook"
+fi
+
+# Remove old APT hook (legacy)
+if [[ -f /etc/apt/apt.conf.d/99discord-notification ]]; then
+    echo -e "${YELLOW}Removing legacy APT hook...${NC}"
     rm -f /etc/apt/apt.conf.d/99discord-notification
-    echo -e "  ${GREEN}✓${NC} Removed /etc/apt/apt.conf.d/99discord-notification"
+    echo -e "  ${GREEN}✓${NC} Removed legacy APT hook"
+fi
+
+# Remove DNF hook and override (RHEL systems)
+if [[ -f /usr/local/bin/patch-gremlin-dnf-hook.sh ]]; then
+    echo -e "${YELLOW}Removing DNF hook...${NC}"
+    rm -f /usr/local/bin/patch-gremlin-dnf-hook.sh
+    echo -e "  ${GREEN}✓${NC} Removed DNF hook"
+fi
+
+if [[ -f /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf ]]; then
+    echo -e "${YELLOW}Removing DNF systemd override...${NC}"
+    rm -f /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf
+    rmdir /etc/systemd/system/dnf-automatic.service.d/ 2>/dev/null || true
+    echo -e "  ${GREEN}✓${NC} Removed DNF systemd override"
 fi
 
 # Backup unattended-upgrades config if it exists

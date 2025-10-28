@@ -107,6 +107,54 @@ else
 fi
 echo ""
 
+# Ask about secret storage method (unless already set via environment)
+if [[ -z "$SECRET_MODE" ]]; then
+    echo -e "${YELLOW}Secret Storage:${NC}"
+    echo "How would you like to store notification secrets?"
+    echo "  1) Doppler (recommended - centralized secret management)"
+    echo "  2) Local file (simpler - secrets stored in /etc/update-notifier/secrets.conf)"
+    echo ""
+    read -p "Enter choice [1-2] (default: 1): " -n 1 -r SECRET_CHOICE
+    echo ""
+    if [[ "$SECRET_CHOICE" == "2" ]]; then
+        SECRET_MODE="local"
+        echo -e "${GREEN}Selected: Local file storage${NC}"
+    else
+        SECRET_MODE="doppler"
+        echo -e "${GREEN}Selected: Doppler${NC}"
+    fi
+else
+    echo -e "\n${GREEN}Using preset secret mode: ${SECRET_MODE}${NC}"
+fi
+
+# If using Doppler, ask for service token
+if [[ "$SECRET_MODE" == "doppler" ]]; then
+    if [[ -z "$DOPPLER_TOKEN" ]]; then
+        echo ""
+        echo -e "${YELLOW}Doppler Service Token Required:${NC}"
+        echo "You need a Doppler service token to allow the notification script to access secrets."
+        echo ""
+        echo "To create a token:"
+        echo "  1. Run: ${BLUE}doppler configs tokens create patch-gremlin-token --max-age 0${NC}"
+        echo "  2. Copy the token (starts with dp.st.)"
+        echo "  OR visit: https://dashboard.doppler.com"
+        echo ""
+        read -p "Enter your Doppler service token: " DOPPLER_TOKEN
+        if [[ -z "$DOPPLER_TOKEN" ]]; then
+            echo -e "${RED}Error: Doppler token is required when using Doppler mode${NC}"
+            exit 1
+        fi
+        # Validate token format
+        if [[ ! "$DOPPLER_TOKEN" =~ ^dp\.st\. ]]; then
+            echo -e "${YELLOW}Warning: Token doesn't start with 'dp.st.' - it may not be valid${NC}"
+        fi
+    else
+        echo -e "${GREEN}Using preset Doppler token${NC}"
+    fi
+fi
+
+echo ""
+
 # Load configuration from file if it exists
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [[ -f "$SCRIPT_DIR/config.sh" ]] && [[ -r "$SCRIPT_DIR/config.sh" ]]; then
@@ -135,6 +183,53 @@ DOPPLER_MATRIX_HOMESERVER_SECRET="${DOPPLER_MATRIX_HOMESERVER_SECRET:-UPDATE_NOT
 DOPPLER_MATRIX_USERNAME_SECRET="${DOPPLER_MATRIX_USERNAME_SECRET:-UPDATE_NOTIFIER_MATRIX_USERNAME}"
 DOPPLER_MATRIX_PASSWORD_SECRET="${DOPPLER_MATRIX_PASSWORD_SECRET:-UPDATE_NOTIFIER_MATRIX_PASSWORD}"
 DOPPLER_MATRIX_ROOM_ID_SECRET="${DOPPLER_MATRIX_ROOM_ID_SECRET:-UPDATE_NOTIFIER_MATRIX_ROOM_ID}"
+
+# If using local file mode, collect secrets now
+if [[ "$SECRET_MODE" == "local" ]]; then
+    echo -e "${YELLOW}Configure Notification Secrets:${NC}"
+    echo "You can configure one or more notification platforms (leave blank to skip):"
+    echo ""
+    
+    # Discord
+    read -p "Discord webhook URL (optional): " LOCAL_DISCORD_WEBHOOK
+    
+    # Teams
+    read -p "Microsoft Teams webhook URL (optional): " LOCAL_TEAMS_WEBHOOK
+    
+    # Slack
+    read -p "Slack webhook URL (optional): " LOCAL_SLACK_WEBHOOK
+    
+    # Matrix - ask which method
+    echo ""
+    echo -e "${YELLOW}Matrix Configuration:${NC}"
+    echo "  1) Skip Matrix"
+    echo "  2) Webhook URL"
+    echo "  3) Homeserver + Username/Password (recommended)"
+    read -p "Enter choice [1-3] (default: 1): " -n 1 -r MATRIX_CHOICE
+    echo ""
+    
+    case "$MATRIX_CHOICE" in
+        2)
+            read -p "Matrix webhook URL: " LOCAL_MATRIX_WEBHOOK
+            ;;
+        3)
+            read -p "Matrix homeserver (e.g., https://matrix.org): " LOCAL_MATRIX_HOMESERVER
+            read -p "Matrix username (e.g., @user:matrix.org): " LOCAL_MATRIX_USERNAME
+            read -sp "Matrix password: " LOCAL_MATRIX_PASSWORD
+            echo ""
+            read -p "Matrix room ID (e.g., !room:matrix.org): " LOCAL_MATRIX_ROOM_ID
+            ;;
+    esac
+    
+    # Validate at least one method configured
+    if [[ -z "$LOCAL_DISCORD_WEBHOOK" ]] && [[ -z "$LOCAL_TEAMS_WEBHOOK" ]] && [[ -z "$LOCAL_SLACK_WEBHOOK" ]] && [[ -z "$LOCAL_MATRIX_WEBHOOK" ]] && [[ -z "$LOCAL_MATRIX_HOMESERVER" ]]; then
+        echo -e "${RED}Error: At least one notification method must be configured${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}✓ Secrets collected${NC}"
+    echo ""
+fi
 
 # Color codes for output
 RED='\033[0;31m'
@@ -339,22 +434,24 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# Check if Doppler is configured for root
-if ! doppler configure get project &>/dev/null; then
-    echo -e "${YELLOW}Warning: Doppler is not configured for the root user${NC}"
-    echo ""
-    echo "Please run these commands first:"
-    echo -e "  ${BLUE}sudo doppler login${NC}"
-    echo -e "  ${BLUE}cd $(pwd) && sudo doppler setup${NC}"
-    echo ""
-    read -p "Would you like to configure Doppler now? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        doppler login
-        doppler setup
-    else
-        echo -e "${RED}Doppler must be configured before continuing${NC}"
-        exit 1
+# Check if Doppler is configured (only if using Doppler mode)
+if [[ "$SECRET_MODE" == "doppler" ]]; then
+    if ! doppler configure get project &>/dev/null; then
+        echo -e "${YELLOW}Warning: Doppler is not configured for the root user${NC}"
+        echo ""
+        echo "Please run these commands first:"
+        echo -e "  ${BLUE}sudo doppler login${NC}"
+        echo -e "  ${BLUE}cd $(pwd) && sudo doppler setup${NC}"
+        echo ""
+        read -p "Would you like to configure Doppler now? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            doppler login
+            doppler setup
+        else
+            echo -e "${RED}Doppler must be configured before continuing${NC}"
+            exit 1
+        fi
     fi
 fi
 
@@ -377,10 +474,42 @@ echo -e "${YELLOW}Installing notification script...${NC}"
 cp "$NOTIFIER_SCRIPT" /usr/local/bin/update-notifier.sh
 chmod +x /usr/local/bin/update-notifier.sh
 
-# Copy config file to system location if it exists
+# Create secrets file if using local mode
+mkdir -p /etc/update-notifier
+if [[ "$SECRET_MODE" == "local" ]]; then
+    echo -e "${YELLOW}Creating local secrets file...${NC}"
+    cat > /etc/update-notifier/secrets.conf << EOF
+# Patch Gremlin Local Secrets
+# This file contains notification webhook URLs and credentials
+# Protect this file: chmod 600 /etc/update-notifier/secrets.conf
+
+SECRET_MODE="local"
+
+# Discord
+DISCORD_WEBHOOK="${LOCAL_DISCORD_WEBHOOK}"
+
+# Microsoft Teams
+TEAMS_WEBHOOK="${LOCAL_TEAMS_WEBHOOK}"
+
+# Slack
+SLACK_WEBHOOK="${LOCAL_SLACK_WEBHOOK}"
+
+# Matrix - Webhook
+MATRIX_WEBHOOK="${LOCAL_MATRIX_WEBHOOK}"
+
+# Matrix - API
+MATRIX_HOMESERVER="${LOCAL_MATRIX_HOMESERVER}"
+MATRIX_USERNAME="${LOCAL_MATRIX_USERNAME}"
+MATRIX_PASSWORD="${LOCAL_MATRIX_PASSWORD}"
+MATRIX_ROOM_ID="${LOCAL_MATRIX_ROOM_ID}"
+EOF
+    chmod 600 /etc/update-notifier/secrets.conf
+    echo -e "  ${GREEN}✓${NC} Created /etc/update-notifier/secrets.conf"
+fi
+
+# Copy config file to system location if it exists (for Doppler mode)
 if [[ -f "$SCRIPT_DIR/config.sh" ]]; then
     echo -e "${YELLOW}Installing configuration file...${NC}"
-    mkdir -p /etc/update-notifier
     cp "$SCRIPT_DIR/config.sh" /etc/update-notifier/config.sh
     chmod 644 /etc/update-notifier/config.sh
     echo -e "  ${GREEN}✓${NC} Copied config to /etc/update-notifier/config.sh"
@@ -398,6 +527,21 @@ fi
 # Create systemd service for post-upgrade notification
 echo -e "${YELLOW}Creating systemd service for notifications...${NC}"
 
+# Build environment variables based on mode
+if [[ "$SECRET_MODE" == "doppler" ]]; then
+    SERVICE_ENV="Environment=\"DOPPLER_TOKEN=$DOPPLER_TOKEN\"
+Environment=\"DOPPLER_DISCORD_SECRET=$DOPPLER_DISCORD_SECRET\"
+Environment=\"DOPPLER_TEAMS_SECRET=$DOPPLER_TEAMS_SECRET\"
+Environment=\"DOPPLER_SLACK_SECRET=$DOPPLER_SLACK_SECRET\"
+Environment=\"DOPPLER_MATRIX_SECRET=$DOPPLER_MATRIX_SECRET\"
+Environment=\"DOPPLER_MATRIX_HOMESERVER_SECRET=$DOPPLER_MATRIX_HOMESERVER_SECRET\"
+Environment=\"DOPPLER_MATRIX_USERNAME_SECRET=$DOPPLER_MATRIX_USERNAME_SECRET\"
+Environment=\"DOPPLER_MATRIX_PASSWORD_SECRET=$DOPPLER_MATRIX_PASSWORD_SECRET\"
+Environment=\"DOPPLER_MATRIX_ROOM_ID_SECRET=$DOPPLER_MATRIX_ROOM_ID_SECRET\""
+else
+    SERVICE_ENV="Environment=\"SECRET_MODE=local\""
+fi
+
 cat > /etc/systemd/system/update-notifier.service << EOF
 [Unit]
 Description=Update Notification Service
@@ -407,14 +551,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-Environment="DOPPLER_DISCORD_SECRET=$DOPPLER_DISCORD_SECRET"
-Environment="DOPPLER_TEAMS_SECRET=$DOPPLER_TEAMS_SECRET"
-Environment="DOPPLER_SLACK_SECRET=$DOPPLER_SLACK_SECRET"
-Environment="DOPPLER_MATRIX_SECRET=$DOPPLER_MATRIX_SECRET"
-Environment="DOPPLER_MATRIX_HOMESERVER_SECRET=$DOPPLER_MATRIX_HOMESERVER_SECRET"
-Environment="DOPPLER_MATRIX_USERNAME_SECRET=$DOPPLER_MATRIX_USERNAME_SECRET"
-Environment="DOPPLER_MATRIX_PASSWORD_SECRET=$DOPPLER_MATRIX_PASSWORD_SECRET"
-Environment="DOPPLER_MATRIX_ROOM_ID_SECRET=$DOPPLER_MATRIX_ROOM_ID_SECRET"
+$SERVICE_ENV
 ExecStart=/usr/local/bin/update-notifier.sh
 User=root
 StandardOutput=journal
@@ -462,10 +599,17 @@ if [[ "$OS_TYPE" == "debian" ]]; then
     echo -e "${YELLOW}Creating APT post-upgrade hook...${NC}"
     mkdir -p /etc/apt/apt.conf.d/
     
+    # Build hook environment based on mode
+    if [[ "$SECRET_MODE" == "doppler" ]]; then
+        HOOK_ENV="DOPPLER_TOKEN='$DOPPLER_TOKEN' DOPPLER_DISCORD_SECRET='$DOPPLER_DISCORD_SECRET' DOPPLER_TEAMS_SECRET='$DOPPLER_TEAMS_SECRET' DOPPLER_SLACK_SECRET='$DOPPLER_SLACK_SECRET' DOPPLER_MATRIX_SECRET='$DOPPLER_MATRIX_SECRET' DOPPLER_MATRIX_HOMESERVER_SECRET='$DOPPLER_MATRIX_HOMESERVER_SECRET' DOPPLER_MATRIX_USERNAME_SECRET='$DOPPLER_MATRIX_USERNAME_SECRET' DOPPLER_MATRIX_PASSWORD_SECRET='$DOPPLER_MATRIX_PASSWORD_SECRET' DOPPLER_MATRIX_ROOM_ID_SECRET='$DOPPLER_MATRIX_ROOM_ID_SECRET'"
+    else
+        HOOK_ENV="SECRET_MODE='local'"
+    fi
+    
     cat > /etc/apt/apt.conf.d/99patch-gremlin-notification << EOF
 // Run Patch Gremlin notification script after unattended-upgrades completes
 Dpkg::Post-Invoke {
-    "if [ -x /usr/local/bin/update-notifier.sh ]; then DOPPLER_DISCORD_SECRET='$DOPPLER_DISCORD_SECRET' DOPPLER_TEAMS_SECRET='$DOPPLER_TEAMS_SECRET' DOPPLER_SLACK_SECRET='$DOPPLER_SLACK_SECRET' DOPPLER_MATRIX_SECRET='$DOPPLER_MATRIX_SECRET' DOPPLER_MATRIX_HOMESERVER_SECRET='$DOPPLER_MATRIX_HOMESERVER_SECRET' DOPPLER_MATRIX_USERNAME_SECRET='$DOPPLER_MATRIX_USERNAME_SECRET' DOPPLER_MATRIX_PASSWORD_SECRET='$DOPPLER_MATRIX_PASSWORD_SECRET' DOPPLER_MATRIX_ROOM_ID_SECRET='$DOPPLER_MATRIX_ROOM_ID_SECRET' /usr/local/bin/update-notifier.sh || true; fi";
+    "if [ -x /usr/local/bin/update-notifier.sh ]; then $HOOK_ENV /usr/local/bin/update-notifier.sh || true; fi";
 };
 EOF
     echo -e "  ${GREEN}✓${NC} Created APT post-upgrade hook"
@@ -484,17 +628,26 @@ HOOKEOF
     
     # Create systemd override for dnf-automatic to run our hook
     mkdir -p /etc/systemd/system/dnf-automatic.service.d/
+    
+    # Build environment variables based on mode
+    if [[ "$SECRET_MODE" == "doppler" ]]; then
+        DNF_ENV="Environment=\"DOPPLER_TOKEN=$DOPPLER_TOKEN\"
+Environment=\"DOPPLER_DISCORD_SECRET=$DOPPLER_DISCORD_SECRET\"
+Environment=\"DOPPLER_TEAMS_SECRET=$DOPPLER_TEAMS_SECRET\"
+Environment=\"DOPPLER_SLACK_SECRET=$DOPPLER_SLACK_SECRET\"
+Environment=\"DOPPLER_MATRIX_SECRET=$DOPPLER_MATRIX_SECRET\"
+Environment=\"DOPPLER_MATRIX_HOMESERVER_SECRET=$DOPPLER_MATRIX_HOMESERVER_SECRET\"
+Environment=\"DOPPLER_MATRIX_USERNAME_SECRET=$DOPPLER_MATRIX_USERNAME_SECRET\"
+Environment=\"DOPPLER_MATRIX_PASSWORD_SECRET=$DOPPLER_MATRIX_PASSWORD_SECRET\"
+Environment=\"DOPPLER_MATRIX_ROOM_ID_SECRET=$DOPPLER_MATRIX_ROOM_ID_SECRET\""
+    else
+        DNF_ENV="Environment=\"SECRET_MODE=local\""
+    fi
+    
     cat > /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf << EOF
 [Service]
 ExecStartPost=/usr/local/bin/patch-gremlin-dnf-hook.sh
-Environment="DOPPLER_DISCORD_SECRET=$DOPPLER_DISCORD_SECRET"
-Environment="DOPPLER_TEAMS_SECRET=$DOPPLER_TEAMS_SECRET"
-Environment="DOPPLER_SLACK_SECRET=$DOPPLER_SLACK_SECRET"
-Environment="DOPPLER_MATRIX_SECRET=$DOPPLER_MATRIX_SECRET"
-Environment="DOPPLER_MATRIX_HOMESERVER_SECRET=$DOPPLER_MATRIX_HOMESERVER_SECRET"
-Environment="DOPPLER_MATRIX_USERNAME_SECRET=$DOPPLER_MATRIX_USERNAME_SECRET"
-Environment="DOPPLER_MATRIX_PASSWORD_SECRET=$DOPPLER_MATRIX_PASSWORD_SECRET"
-Environment="DOPPLER_MATRIX_ROOM_ID_SECRET=$DOPPLER_MATRIX_ROOM_ID_SECRET"
+$DNF_ENV
 EOF
     echo -e "  ${GREEN}✓${NC} Created DNF post-upgrade hook"
 fi
