@@ -76,23 +76,32 @@ export DOPPLER_MATRIX_ROOM_ID_SECRET="SYSTEM_UPDATE_MATRIX_ROOM"
 ### 4. Install
 
 ```bash
-sudo ./setup-unattended-upgrades.sh
+# Source your config to set environment variables
+source config.sh
+
+# Run setup (with -E to preserve environment variables)
+sudo -E ./setup-unattended-upgrades.sh
 ```
 
+**Note**: The `source config.sh` step is only needed during setup. The setup script will permanently embed your custom secret names into the systemd service, so they'll persist across reboots without needing to source the config file again.
+
 The setup script will:
-- Install and configure unattended-upgrades for security updates
-- Copy config.sh to `/etc/update-notifier/`
+- Install and configure unattended-upgrades (Debian) or dnf-automatic (RHEL)
+- Embed your custom Doppler secret names into the systemd service
 - Install notification script to `/usr/local/bin/`
-- Create systemd service and timer
-- Setup APT post-upgrade hook
+- Create systemd service and timer with your specified schedule
+- Setup post-upgrade hooks (APT or DNF)
 
 ### 5. Test
 
 ```bash
-# Verify installation
-./test-setup.sh
+# Source config for testing (if using custom secret names)
+source config.sh
 
-# Test notification
+# Verify installation
+sudo -E ./test-setup.sh
+
+# Test notification manually
 sudo /usr/local/bin/update-notifier.sh
 ```
 

@@ -1,8 +1,15 @@
 #!/bin/bash
 
 # Patch Gremlin - Multi-Platform Update Notifier
-# Sends system update notifications to Discord and/or Matrix using credentials from Doppler
+# Sends system update notifications to Discord and/or Matrix
+# Supports both Doppler and local file storage for secrets
 # https://github.com/ChiefGyk3D/Patch-Gremlin
+
+# Check if using local secrets file
+if [[ -f /etc/update-notifier/secrets.conf ]]; then
+    source /etc/update-notifier/secrets.conf
+    SECRET_MODE="${SECRET_MODE:-local}"
+fi
 
 # Load configuration from file if it exists
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,13 +29,6 @@ DOPPLER_MATRIX_ROOM_ID_SECRET="${DOPPLER_MATRIX_ROOM_ID_SECRET:-UPDATE_NOTIFIER_
 DOPPLER_TEAMS_SECRET="${DOPPLER_TEAMS_SECRET:-UPDATE_NOTIFIER_TEAMS_WEBHOOK}"
 DOPPLER_SLACK_SECRET="${DOPPLER_SLACK_SECRET:-UPDATE_NOTIFIER_SLACK_WEBHOOK}"
 
-# Check if Doppler CLI is installed
-if ! command -v doppler &> /dev/null; then
-    echo "Error: Doppler CLI is not installed. Please install it first."
-    echo "Visit: https://docs.doppler.com/docs/install-cli"
-    exit 1
-fi
-
 # Configuration
 # Auto-detect update log file location based on OS
 if [[ -f /var/log/unattended-upgrades/unattended-upgrades.log ]]; then
@@ -47,17 +47,37 @@ fi
 HOSTNAME=$(hostname)
 LAST_RUN=$(date)
 
-# Retrieve webhook URLs and Matrix credentials from Doppler
-DISCORD_WEBHOOK=$(doppler secrets get "$DOPPLER_DISCORD_SECRET" --plain 2>/dev/null)
-TEAMS_WEBHOOK=$(doppler secrets get "$DOPPLER_TEAMS_SECRET" --plain 2>/dev/null)
-SLACK_WEBHOOK=$(doppler secrets get "$DOPPLER_SLACK_SECRET" --plain 2>/dev/null)
+# Retrieve secrets based on mode
+if [[ "$SECRET_MODE" == "local" ]]; then
+    # Secrets already loaded from /etc/update-notifier/secrets.conf
+    DISCORD_WEBHOOK="${DISCORD_WEBHOOK}"
+    TEAMS_WEBHOOK="${TEAMS_WEBHOOK}"
+    SLACK_WEBHOOK="${SLACK_WEBHOOK}"
+    MATRIX_WEBHOOK="${MATRIX_WEBHOOK}"
+    MATRIX_HOMESERVER="${MATRIX_HOMESERVER}"
+    MATRIX_USERNAME="${MATRIX_USERNAME}"
+    MATRIX_PASSWORD="${MATRIX_PASSWORD}"
+    MATRIX_ROOM_ID="${MATRIX_ROOM_ID}"
+else
+    # Check if Doppler CLI is installed
+    if ! command -v doppler &> /dev/null; then
+        echo "Error: Doppler CLI is not installed. Please install it first."
+        echo "Visit: https://docs.doppler.com/docs/install-cli"
+        exit 1
+    fi
+    
+    # Retrieve webhook URLs and Matrix credentials from Doppler
+    DISCORD_WEBHOOK=$(doppler secrets get "$DOPPLER_DISCORD_SECRET" --plain 2>/dev/null)
+    TEAMS_WEBHOOK=$(doppler secrets get "$DOPPLER_TEAMS_SECRET" --plain 2>/dev/null)
+    SLACK_WEBHOOK=$(doppler secrets get "$DOPPLER_SLACK_SECRET" --plain 2>/dev/null)
 
-# Matrix can use either webhooks OR homeserver + username + password + room ID
-MATRIX_WEBHOOK=$(doppler secrets get "$DOPPLER_MATRIX_SECRET" --plain 2>/dev/null)
-MATRIX_HOMESERVER=$(doppler secrets get "$DOPPLER_MATRIX_HOMESERVER_SECRET" --plain 2>/dev/null)
-MATRIX_USERNAME=$(doppler secrets get "$DOPPLER_MATRIX_USERNAME_SECRET" --plain 2>/dev/null)
-MATRIX_PASSWORD=$(doppler secrets get "$DOPPLER_MATRIX_PASSWORD_SECRET" --plain 2>/dev/null)
-MATRIX_ROOM_ID=$(doppler secrets get "$DOPPLER_MATRIX_ROOM_ID_SECRET" --plain 2>/dev/null)
+    # Matrix can use either webhooks OR homeserver + username + password + room ID
+    MATRIX_WEBHOOK=$(doppler secrets get "$DOPPLER_MATRIX_SECRET" --plain 2>/dev/null)
+    MATRIX_HOMESERVER=$(doppler secrets get "$DOPPLER_MATRIX_HOMESERVER_SECRET" --plain 2>/dev/null)
+    MATRIX_USERNAME=$(doppler secrets get "$DOPPLER_MATRIX_USERNAME_SECRET" --plain 2>/dev/null)
+    MATRIX_PASSWORD=$(doppler secrets get "$DOPPLER_MATRIX_PASSWORD_SECRET" --plain 2>/dev/null)
+    MATRIX_ROOM_ID=$(doppler secrets get "$DOPPLER_MATRIX_ROOM_ID_SECRET" --plain 2>/dev/null)
+fi
 
 # Determine Matrix configuration method
 MATRIX_CONFIGURED=false
@@ -73,29 +93,37 @@ fi
 
 # Check if at least one notification method is configured
 if [[ -z "$DISCORD_WEBHOOK" ]] && [[ -z "$TEAMS_WEBHOOK" ]] && [[ -z "$SLACK_WEBHOOK" ]] && [[ "$MATRIX_CONFIGURED" == false ]]; then
-    echo "Error: No notification methods configured in Doppler."
-    echo "Make sure you have:"
-    echo "1. Run 'doppler login' to authenticate"
-    echo "2. Run 'doppler setup' in your project directory"
-    echo "3. Added at least one notification method:"
+    echo "Error: No notification methods configured."
     echo ""
-    echo "   For Discord:"
-    echo "   - $DOPPLER_DISCORD_SECRET (webhook URL)"
-    echo ""
-    echo "   For Microsoft Teams:"
-    echo "   - $DOPPLER_TEAMS_SECRET (webhook URL)"
-    echo ""
-    echo "   For Slack:"
-    echo "   - $DOPPLER_SLACK_SECRET (webhook URL)"
-    echo ""
-    echo "   For Matrix (choose one method):"
-    echo "   - $DOPPLER_MATRIX_SECRET (webhook URL) OR"
-    echo "   - $DOPPLER_MATRIX_HOMESERVER_SECRET (e.g., https://matrix.org)"
-    echo "   - $DOPPLER_MATRIX_USERNAME_SECRET (e.g., @user:matrix.org)"
-    echo "   - $DOPPLER_MATRIX_PASSWORD_SECRET (Matrix account password)"
-    echo "   - $DOPPLER_MATRIX_ROOM_ID_SECRET (e.g., !roomid:matrix.org)"
-    echo ""
-    echo "You can customize the secret names by setting environment variables in config.sh"
+    if [[ "$SECRET_MODE" == "local" ]]; then
+        echo "Using local file storage mode."
+        echo "Secrets should be configured in: /etc/update-notifier/secrets.conf"
+        echo "Re-run the setup script to reconfigure."
+    else
+        echo "Using Doppler mode."
+        echo "Make sure you have:"
+        echo "1. Run 'doppler login' to authenticate"
+        echo "2. Run 'doppler setup' in your project directory"
+        echo "3. Added at least one notification method:"
+        echo ""
+        echo "   For Discord:"
+        echo "   - $DOPPLER_DISCORD_SECRET (webhook URL)"
+        echo ""
+        echo "   For Microsoft Teams:"
+        echo "   - $DOPPLER_TEAMS_SECRET (webhook URL)"
+        echo ""
+        echo "   For Slack:"
+        echo "   - $DOPPLER_SLACK_SECRET (webhook URL)"
+        echo ""
+        echo "   For Matrix (choose one method):"
+        echo "   - $DOPPLER_MATRIX_SECRET (webhook URL) OR"
+        echo "   - $DOPPLER_MATRIX_HOMESERVER_SECRET (e.g., https://matrix.org)"
+        echo "   - $DOPPLER_MATRIX_USERNAME_SECRET (e.g., @user:matrix.org)"
+        echo "   - $DOPPLER_MATRIX_PASSWORD_SECRET (Matrix account password)"
+        echo "   - $DOPPLER_MATRIX_ROOM_ID_SECRET (e.g., !roomid:matrix.org)"
+        echo ""
+        echo "You can customize the secret names by setting environment variables in config.sh"
+    fi
     exit 1
 fi
 
