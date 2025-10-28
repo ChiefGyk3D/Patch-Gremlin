@@ -13,7 +13,24 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${BLUE}=== Update Notifier Configuration Test ===${NC}\n"
+echo -e "${BLUE}=== Patch Gremlin Configuration Test ===${NC}\n"
+
+# Detect OS type
+if [[ -f /etc/os-release ]]; then
+    . /etc/os-release
+    OS_ID="${ID}"
+    if [[ "$OS_ID" =~ ^(debian|ubuntu)$ ]] || [[ "${ID_LIKE}" =~ debian ]]; then
+        OS_TYPE="debian"
+    elif [[ "$OS_ID" =~ ^(rhel|centos|rocky|almalinux|fedora|amzn)$ ]] || [[ "${ID_LIKE}" =~ rhel|fedora ]]; then
+        OS_TYPE="rhel"
+    else
+        OS_TYPE="unknown"
+    fi
+else
+    OS_TYPE="unknown"
+fi
+
+echo -e "${YELLOW}Detected OS: $OS_ID (type: $OS_TYPE)${NC}\n"
 
 # Get configured secret names
 DOPPLER_DISCORD_SECRET="${DOPPLER_DISCORD_SECRET:-UPDATE_NOTIFIER_DISCORD_WEBHOOK}"
@@ -219,13 +236,23 @@ if [[ "$DISCORD_FOUND" == false ]] && [[ "$MATRIX_FOUND" == false ]]; then
 fi
 
 if [[ "$AS_ROOT" == true ]]; then
-    # Check if unattended-upgrades is installed
-    echo -e "\n${YELLOW}Checking unattended-upgrades...${NC}"
-    if dpkg -l | grep -q unattended-upgrades; then
-        echo -e "  ${GREEN}✓${NC} unattended-upgrades package installed"
-    else
-        echo -e "  ${YELLOW}○${NC} unattended-upgrades not installed"
-        echo -e "    Run: ${BLUE}sudo ./setup-unattended-upgrades.sh${NC}"
+    # Check if update packages are installed (OS-specific)
+    if [[ "$OS_TYPE" == "debian" ]]; then
+        echo -e "\n${YELLOW}Checking unattended-upgrades...${NC}"
+        if dpkg -l | grep -q unattended-upgrades; then
+            echo -e "  ${GREEN}✓${NC} unattended-upgrades package installed"
+        else
+            echo -e "  ${YELLOW}○${NC} unattended-upgrades not installed"
+            echo -e "    Run: ${BLUE}sudo ./setup-unattended-upgrades.sh${NC}"
+        fi
+    elif [[ "$OS_TYPE" == "rhel" ]]; then
+        echo -e "\n${YELLOW}Checking dnf-automatic...${NC}"
+        if rpm -q dnf-automatic &>/dev/null; then
+            echo -e "  ${GREEN}✓${NC} dnf-automatic package installed"
+        else
+            echo -e "  ${YELLOW}○${NC} dnf-automatic not installed"
+            echo -e "    Run: ${BLUE}sudo ./setup-unattended-upgrades.sh${NC}"
+        fi
     fi
 
     # Check if notifier script is installed
@@ -239,23 +266,38 @@ if [[ "$AS_ROOT" == true ]]; then
 
     # Check systemd service
     echo -e "\n${YELLOW}Checking systemd service...${NC}"
-    if [[ -f /etc/systemd/system/update-notifier-discord.service ]]; then
+    if [[ -f /etc/systemd/system/update-notifier.service ]]; then
         echo -e "  ${GREEN}✓${NC} Systemd service file exists"
         
         # Check if environment variables are set in service
-        if grep -q "DOPPLER_DISCORD_SECRET" /etc/systemd/system/update-notifier-discord.service; then
+        if grep -q "DOPPLER_DISCORD_SECRET" /etc/systemd/system/update-notifier.service; then
             echo -e "  ${GREEN}✓${NC} Service configured with custom secret names"
         fi
     else
         echo -e "  ${YELLOW}○${NC} Systemd service not installed"
     fi
 
-    # Check APT hook
-    echo -e "\n${YELLOW}Checking APT post-upgrade hook...${NC}"
-    if [[ -f /etc/apt/apt.conf.d/99discord-notification ]]; then
-        echo -e "  ${GREEN}✓${NC} APT hook file exists"
-    else
-        echo -e "  ${YELLOW}○${NC} APT hook not installed"
+    # Check post-upgrade hooks (OS-specific)
+    if [[ "$OS_TYPE" == "debian" ]]; then
+        echo -e "\n${YELLOW}Checking APT post-upgrade hook...${NC}"
+        if [[ -f /etc/apt/apt.conf.d/99patch-gremlin-notification ]]; then
+            echo -e "  ${GREEN}✓${NC} APT hook file exists"
+        else
+            echo -e "  ${YELLOW}○${NC} APT hook not installed"
+        fi
+    elif [[ "$OS_TYPE" == "rhel" ]]; then
+        echo -e "\n${YELLOW}Checking DNF post-upgrade hook...${NC}"
+        if [[ -f /usr/local/bin/patch-gremlin-dnf-hook.sh ]]; then
+            echo -e "  ${GREEN}✓${NC} DNF hook script exists"
+        else
+            echo -e "  ${YELLOW}○${NC} DNF hook not installed"
+        fi
+        
+        if [[ -f /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf ]]; then
+            echo -e "  ${GREEN}✓${NC} DNF systemd override exists"
+        else
+            echo -e "  ${YELLOW}○${NC} DNF systemd override not installed"
+        fi
     fi
 fi
 
