@@ -32,31 +32,44 @@ fi
 
 echo "Detected OS: $OS_ID $OS_VERSION (type: $OS_TYPE)"
 
-# Ask user about update scope
-echo -e "\n${YELLOW}Update Configuration:${NC}"
-echo "What type of updates should be automatically installed?"
-echo "  1) Security updates only (recommended)"
-echo "  2) All available updates"
-echo ""
-read -p "Enter choice [1-2] (default: 1): " -n 1 -r UPDATE_SCOPE
-echo ""
-if [[ -z "$UPDATE_SCOPE" ]] || [[ "$UPDATE_SCOPE" == "1" ]]; then
-    UPDATE_TYPE="security"
-    echo -e "${GREEN}Selected: Security updates only${NC}"
+# Ask user about update scope (unless already set via environment)
+if [[ -z "$UPDATE_TYPE" ]]; then
+    echo -e "\n${YELLOW}Update Configuration:${NC}"
+    echo "What type of updates should be automatically installed?"
+    echo "  1) Security updates only (recommended)"
+    echo "  2) All available updates"
+    echo ""
+    read -p "Enter choice [1-2] (default: 1): " -n 1 -r UPDATE_SCOPE
+    echo ""
+    if [[ -z "$UPDATE_SCOPE" ]] || [[ "$UPDATE_SCOPE" == "1" ]]; then
+        UPDATE_TYPE="security"
+        echo -e "${GREEN}Selected: Security updates only${NC}"
+    else
+        UPDATE_TYPE="all"
+        echo -e "${GREEN}Selected: All available updates${NC}"
+    fi
 else
-    UPDATE_TYPE="all"
-    echo -e "${GREEN}Selected: All available updates${NC}"
+    echo -e "\n${GREEN}Using preset configuration: ${UPDATE_TYPE} updates${NC}"
 fi
 echo ""
 
 # Load configuration from file if it exists
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [[ -f "$SCRIPT_DIR/config.sh" ]]; then
+if [[ -f "$SCRIPT_DIR/config.sh" ]] && [[ -r "$SCRIPT_DIR/config.sh" ]]; then
     echo "Loading configuration from $SCRIPT_DIR/config.sh"
-    source "$SCRIPT_DIR/config.sh"
-elif [[ -f /etc/update-notifier/config.sh ]]; then
+    # Basic validation: check if file contains only variable assignments
+    if grep -q '^[[:space:]]*export[[:space:]]\+[A-Z_][A-Z0-9_]*=' "$SCRIPT_DIR/config.sh"; then
+        source "$SCRIPT_DIR/config.sh"
+    else
+        echo -e "${YELLOW}Warning: config.sh doesn't appear to contain valid configuration${NC}"
+    fi
+elif [[ -f /etc/update-notifier/config.sh ]] && [[ -r /etc/update-notifier/config.sh ]]; then
     echo "Loading configuration from /etc/update-notifier/config.sh"
-    source /etc/update-notifier/config.sh
+    if grep -q '^[[:space:]]*export[[:space:]]\+[A-Z_][A-Z0-9_]*=' /etc/update-notifier/config.sh; then
+        source /etc/update-notifier/config.sh
+    else
+        echo -e "${YELLOW}Warning: config.sh doesn't appear to contain valid configuration${NC}"
+    fi
 fi
 
 # Configuration - Set defaults for any variables not set by config.sh
@@ -152,7 +165,7 @@ EOF
 
 install_rhel_updates() {
     echo -e "${YELLOW}Installing dnf-automatic package...${NC}"
-    $PACKAGE_MANAGER install -y dnf-automatic
+    "$PACKAGE_MANAGER" install -y dnf-automatic
 
     echo -e "${YELLOW}Configuring dnf-automatic...${NC}"
     
@@ -254,7 +267,6 @@ elif [[ "$OS_TYPE" == "rhel" ]]; then
 fi
 
 # Copy the notifier script to the system
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTIFIER_SCRIPT="$SCRIPT_DIR/update-notifier.sh"
 
 if [[ ! -f "$NOTIFIER_SCRIPT" ]]; then
@@ -344,7 +356,6 @@ EOF
     
 elif [[ "$OS_TYPE" == "rhel" ]]; then
     echo -e "${YELLOW}Creating DNF post-upgrade hook...${NC}"
-    mkdir -p /etc/dnf/plugins/post-transaction-actions.d/
     
     cat > /usr/local/bin/patch-gremlin-dnf-hook.sh << 'HOOKEOF'
 #!/bin/bash
