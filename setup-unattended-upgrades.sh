@@ -231,6 +231,15 @@ if [[ -f "$SCRIPT_DIR/config.sh" ]]; then
     echo -e "  ${GREEN}✓${NC} Copied config to /etc/update-notifier/config.sh"
 fi
 
+# Clean up old service files if they exist
+if [[ -f /etc/systemd/system/update-notifier-discord.service ]]; then
+    echo -e "${YELLOW}Removing old service files...${NC}"
+    systemctl stop update-notifier-discord.service 2>/dev/null || true
+    systemctl disable update-notifier-discord.service 2>/dev/null || true
+    rm -f /etc/systemd/system/update-notifier-discord.service
+    rm -f /etc/systemd/system/update-notifier-discord.timer
+fi
+
 # Create systemd service for post-upgrade notification
 echo -e "${YELLOW}Creating systemd service for notifications...${NC}"
 
