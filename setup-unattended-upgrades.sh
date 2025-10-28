@@ -205,26 +205,40 @@ Unattended-Upgrade::SyslogFacility "daemon";
 Unattended-Upgrade::Verbose "true";
 EOF
 
-    # Create auto-upgrades configuration based on schedule
-    if [[ "$UPDATE_SCHEDULE" == "weekly" ]]; then
-        cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
-APT::Periodic::Update-Package-Lists "7";
-APT::Periodic::Download-Upgradeable-Packages "7";
-APT::Periodic::Unattended-Upgrade "7";
-APT::Periodic::AutocleanInterval "7";
-APT::Periodic::Verbose "2";
-EOF
-    else
-        cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+    # Create auto-upgrades configuration - always enable, schedule controlled by timer
+    cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Download-Upgradeable-Packages "1";
 APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";
 APT::Periodic::Verbose "2";
 EOF
-    fi
 
-    echo -e "  ${GREEN}✓${NC} Configured unattended-upgrades for Debian/Ubuntu (${UPDATE_TYPE} updates)"
+    # Configure apt-daily-upgrade.timer to run at specific time
+    mkdir -p /etc/systemd/system/apt-daily-upgrade.timer.d/
+    if [[ "$UPDATE_SCHEDULE" == "weekly" ]]; then
+        cat > /etc/systemd/system/apt-daily-upgrade.timer.d/schedule.conf << EOF
+[Timer]
+# Override default schedule - run weekly on ${UPDATE_DAY}day at ${UPDATE_TIME}
+OnCalendar=
+OnCalendar=${UPDATE_DAY} *-*-* ${UPDATE_TIME}:00
+RandomizedDelaySec=30min
+EOF
+    else
+        cat > /etc/systemd/system/apt-daily-upgrade.timer.d/schedule.conf << EOF
+[Timer]
+# Override default schedule - run daily at ${UPDATE_TIME}
+OnCalendar=
+OnCalendar=*-*-* ${UPDATE_TIME}:00
+RandomizedDelaySec=30min
+EOF
+    fi
+    
+    # Reload systemd to apply timer changes
+    systemctl daemon-reload
+    systemctl restart apt-daily-upgrade.timer
+
+    echo -e "  ${GREEN}✓${NC} Configured unattended-upgrades for Debian/Ubuntu (${UPDATE_TYPE} updates, ${UPDATE_SCHEDULE} at ${UPDATE_TIME})"
 }
 
 install_rhel_updates() {
@@ -300,7 +314,7 @@ EOF
     systemctl daemon-reload
     systemctl enable --now dnf-automatic.timer
     
-    echo -e "  ${GREEN}✓${NC} Configured dnf-automatic for RHEL/Fedora/Amazon Linux (${UPDATE_TYPE} updates)"
+    echo -e "  ${GREEN}✓${NC} Configured dnf-automatic for RHEL/Fedora/Amazon Linux (${UPDATE_TYPE} updates, ${UPDATE_SCHEDULE} at ${UPDATE_TIME})"
 }
 
 echo -e "${GREEN}Setting up automatic security updates for $OS_ID...${NC}"
