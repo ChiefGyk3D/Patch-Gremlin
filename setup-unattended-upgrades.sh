@@ -53,6 +53,60 @@ else
 fi
 echo ""
 
+# Ask user about update schedule (unless already set via environment)
+if [[ -z "$UPDATE_SCHEDULE" ]]; then
+    echo -e "${YELLOW}Update Schedule:${NC}"
+    echo "How often should updates be checked and installed?"
+    echo "  1) Daily (recommended for security)"
+    echo "  2) Weekly"
+    echo ""
+    read -p "Enter choice [1-2] (default: 1): " -n 1 -r SCHEDULE_CHOICE
+    echo ""
+    if [[ -z "$SCHEDULE_CHOICE" ]] || [[ "$SCHEDULE_CHOICE" == "1" ]]; then
+        UPDATE_SCHEDULE="daily"
+        echo -e "${GREEN}Selected: Daily updates${NC}"
+    else
+        UPDATE_SCHEDULE="weekly"
+        echo -e "${GREEN}Selected: Weekly updates${NC}"
+        echo ""
+        echo -e "${YELLOW}Which day of the week?${NC}"
+        echo "  1) Sunday    2) Monday    3) Tuesday   4) Wednesday"
+        echo "  5) Thursday  6) Friday    7) Saturday"
+        echo ""
+        read -p "Enter choice [1-7] (default: 7 - Saturday): " -n 1 -r DAY_CHOICE
+        echo ""
+        case "$DAY_CHOICE" in
+            1) UPDATE_DAY="Sun" ;;
+            2) UPDATE_DAY="Mon" ;;
+            3) UPDATE_DAY="Tue" ;;
+            4) UPDATE_DAY="Wed" ;;
+            5) UPDATE_DAY="Thu" ;;
+            6) UPDATE_DAY="Fri" ;;
+            *) UPDATE_DAY="Sat" ;;
+        esac
+        echo -e "${GREEN}Selected: Weekly updates on ${UPDATE_DAY}day${NC}"
+    fi
+    
+    # Ask for time of day
+    echo ""
+    echo -e "${YELLOW}What time should updates run?${NC}"
+    echo "Enter time in 24-hour format (HH:MM, default: 02:00):"
+    read -p "Time: " UPDATE_TIME
+    if [[ -z "$UPDATE_TIME" ]]; then
+        UPDATE_TIME="02:00"
+    fi
+    # Validate time format
+    if [[ ! "$UPDATE_TIME" =~ ^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+        echo -e "${YELLOW}Invalid time format, using default 02:00${NC}"
+        UPDATE_TIME="02:00"
+    fi
+    echo -e "${GREEN}Selected: Updates at ${UPDATE_TIME}${NC}"
+else
+    echo -e "\n${GREEN}Using preset schedule: ${UPDATE_SCHEDULE}${NC}"
+    UPDATE_TIME="${UPDATE_TIME:-02:00}"
+fi
+echo ""
+
 # Load configuration from file if it exists
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [[ -f "$SCRIPT_DIR/config.sh" ]] && [[ -r "$SCRIPT_DIR/config.sh" ]]; then
@@ -151,14 +205,24 @@ Unattended-Upgrade::SyslogFacility "daemon";
 Unattended-Upgrade::Verbose "true";
 EOF
 
-    # Create auto-upgrades configuration
-    cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+    # Create auto-upgrades configuration based on schedule
+    if [[ "$UPDATE_SCHEDULE" == "weekly" ]]; then
+        cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+APT::Periodic::Update-Package-Lists "7";
+APT::Periodic::Download-Upgradeable-Packages "7";
+APT::Periodic::Unattended-Upgrade "7";
+APT::Periodic::AutocleanInterval "7";
+APT::Periodic::Verbose "2";
+EOF
+    else
+        cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Download-Upgradeable-Packages "1";
 APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";
 APT::Periodic::Verbose "2";
 EOF
+    fi
 
     echo -e "  ${GREEN}✓${NC} Configured unattended-upgrades for Debian/Ubuntu (${UPDATE_TYPE} updates)"
 }
@@ -212,7 +276,28 @@ email_host = localhost
 debuglevel = 1
 EOF
 
-    # Enable and start the timer
+    # Configure dnf-automatic timer based on user schedule
+    mkdir -p /etc/systemd/system/dnf-automatic.timer.d/
+    if [[ "$UPDATE_SCHEDULE" == "weekly" ]]; then
+        cat > /etc/systemd/system/dnf-automatic.timer.d/schedule.conf << EOF
+[Timer]
+# Override default schedule - run weekly on ${UPDATE_DAY}day at ${UPDATE_TIME}
+OnCalendar=
+OnCalendar=${UPDATE_DAY} *-*-* ${UPDATE_TIME}:00
+RandomizedDelaySec=30min
+EOF
+    else
+        cat > /etc/systemd/system/dnf-automatic.timer.d/schedule.conf << EOF
+[Timer]
+# Override default schedule - run daily at ${UPDATE_TIME}
+OnCalendar=
+OnCalendar=*-*-* ${UPDATE_TIME}:00
+RandomizedDelaySec=30min
+EOF
+    fi
+    
+    # Reload systemd and enable timer
+    systemctl daemon-reload
     systemctl enable --now dnf-automatic.timer
     
     echo -e "  ${GREEN}✓${NC} Configured dnf-automatic for RHEL/Fedora/Amazon Linux (${UPDATE_TYPE} updates)"
@@ -325,21 +410,38 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
-# Create systemd timer for daily notifications
-cat > /etc/systemd/system/update-notifier.timer << 'EOF'
+# Create systemd timer based on schedule
+if [[ "$UPDATE_SCHEDULE" == "weekly" ]]; then
+    cat > /etc/systemd/system/update-notifier.timer << EOF
 [Unit]
 Description=Timer for Update Notifications
 Requires=update-notifier.service
 
 [Timer]
-# Run daily with randomized delay
-OnCalendar=daily
+# Run weekly on ${UPDATE_DAY}day at ${UPDATE_TIME}
+OnCalendar=${UPDATE_DAY} *-*-* ${UPDATE_TIME}:00
 RandomizedDelaySec=30min
 Persistent=true
 
 [Install]
 WantedBy=timers.target
 EOF
+else
+    cat > /etc/systemd/system/update-notifier.timer << EOF
+[Unit]
+Description=Timer for Update Notifications
+Requires=update-notifier.service
+
+[Timer]
+# Run daily at ${UPDATE_TIME}
+OnCalendar=*-*-* ${UPDATE_TIME}:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+fi
 
 # Create post-upgrade hook (OS-specific)
 if [[ "$OS_TYPE" == "debian" ]]; then
