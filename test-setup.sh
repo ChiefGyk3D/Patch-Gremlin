@@ -98,44 +98,22 @@ fi
 
 # Check Doppler setup (project configuration)
 echo -e "\n${YELLOW}Checking Doppler configuration...${NC}"
-if doppler configure get 2>/dev/null | grep -q project; then
-    DOPPLER_PROJECT=$(doppler configure get project --plain 2>/dev/null || echo "unknown")
-    DOPPLER_CONFIG=$(doppler configure get config --plain 2>/dev/null || echo "unknown")
+DOPPLER_PROJECT=$(doppler configure get project --plain 2>/dev/null)
+DOPPLER_CONFIG=$(doppler configure get config --plain 2>/dev/null)
+if [[ -n "$DOPPLER_PROJECT" ]] && [[ -n "$DOPPLER_CONFIG" ]]; then
     echo -e "  ${GREEN}✓${NC} Doppler project configured"
     echo -e "    Project: $DOPPLER_PROJECT"
     echo -e "    Config:  $DOPPLER_CONFIG"
 else
     echo -e "  ${RED}✗${NC} Doppler not configured for this directory"
     if [[ $AS_ROOT == true ]]; then
-        echo -e "    Run: ${BLUE}doppler setup${NC}"
+        echo -e "    Run as root: ${BLUE}doppler configure set project YOUR_PROJECT${NC}"
+        echo -e "                 ${BLUE}doppler configure set config YOUR_CONFIG${NC}"
     else
-        echo -e "    Run: ${BLUE}sudo doppler setup${NC} (must configure as root)"
+        echo -e "    Run: ${BLUE}doppler setup${NC}"
+        echo -e "    Then as root: ${BLUE}sudo doppler configure set project YOUR_PROJECT${NC}"
+        echo -e "                  ${BLUE}sudo doppler configure set config YOUR_CONFIG${NC}"
     fi
-    exit 1
-fi
-
-# Check if logged in to Doppler
-echo -e "\n${YELLOW}Checking Doppler authentication...${NC}"
-if doppler me 2>/dev/null | grep -q email; then
-    DOPPLER_EMAIL=$(doppler me --json 2>/dev/null | grep -oP '"email":\s*"\K[^"]+' || echo "unknown")
-    echo -e "  ${GREEN}✓${NC} Logged in as: $DOPPLER_EMAIL"
-else
-    echo -e "  ${RED}✗${NC} Not logged in to Doppler"
-    echo -e "    Run: ${BLUE}doppler login${NC}"
-    exit 1
-fi
-
-# Check Doppler setup
-echo -e "\n${YELLOW}Checking Doppler configuration...${NC}"
-if doppler configure get 2>/dev/null | grep -q project; then
-    DOPPLER_PROJECT=$(doppler configure get project --plain 2>/dev/null || echo "unknown")
-    DOPPLER_CONFIG=$(doppler configure get config --plain 2>/dev/null || echo "unknown")
-    echo -e "  ${GREEN}✓${NC} Doppler project configured"
-    echo -e "    Project: $DOPPLER_PROJECT"
-    echo -e "    Config:  $DOPPLER_CONFIG"
-else
-    echo -e "  ${RED}✗${NC} Doppler not configured for this directory"
-    echo -e "    Run: ${BLUE}doppler setup${NC}"
     exit 1
 fi
 
