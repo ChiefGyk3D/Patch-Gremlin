@@ -32,6 +32,23 @@ fi
 
 echo "Detected OS: $OS_ID $OS_VERSION (type: $OS_TYPE)"
 
+# Ask user about update scope
+echo -e "\n${YELLOW}Update Configuration:${NC}"
+echo "What type of updates should be automatically installed?"
+echo "  1) Security updates only (recommended)"
+echo "  2) All available updates"
+echo ""
+read -p "Enter choice [1-2] (default: 1): " -n 1 -r UPDATE_SCOPE
+echo ""
+if [[ -z "$UPDATE_SCOPE" ]] || [[ "$UPDATE_SCOPE" == "1" ]]; then
+    UPDATE_TYPE="security"
+    echo -e "${GREEN}Selected: Security updates only${NC}"
+else
+    UPDATE_TYPE="all"
+    echo -e "${GREEN}Selected: All available updates${NC}"
+fi
+echo ""
+
 # Load configuration from file if it exists
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [[ -f "$SCRIPT_DIR/config.sh" ]]; then
@@ -73,14 +90,33 @@ install_debian_updates() {
     fi
 
     # Create the main unattended-upgrades configuration
-    cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
+    if [[ "$UPDATE_TYPE" == "security" ]]; then
+        cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
+// Automatically upgrade packages from these origins
+Unattended-Upgrade::Origins-Pattern {
+    // Security updates only
+    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+    "origin=Debian,codename=${distro_codename}-security";
+    "origin=Ubuntu,archive=${distro_codename}-security,label=Ubuntu";
+};
+EOF
+    else
+        cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
 // Automatically upgrade packages from these origins
 Unattended-Upgrade::Origins-Pattern {
     // Security updates
     "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
     "origin=Debian,codename=${distro_codename}-security";
     "origin=Ubuntu,archive=${distro_codename}-security,label=Ubuntu";
+    // All updates
+    "origin=Debian,codename=${distro_codename},label=Debian";
+    "origin=Ubuntu,archive=${distro_codename},label=Ubuntu";
+    "origin=Ubuntu,archive=${distro_codename}-updates,label=Ubuntu";
 };
+EOF
+    fi
+    
+    cat >> /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
 
 // List of packages to NOT automatically upgrade
 Unattended-Upgrade::Package-Blacklist {
@@ -111,7 +147,7 @@ APT::Periodic::AutocleanInterval "7";
 APT::Periodic::Verbose "2";
 EOF
 
-    echo -e "  ${GREEN}✓${NC} Configured unattended-upgrades for Debian/Ubuntu"
+    echo -e "  ${GREEN}✓${NC} Configured unattended-upgrades for Debian/Ubuntu (${UPDATE_TYPE} updates)"
 }
 
 install_rhel_updates() {
@@ -125,13 +161,21 @@ install_rhel_updates() {
         cp /etc/dnf/automatic.conf /etc/dnf/automatic.conf.backup.$(date +%Y%m%d-%H%M%S)
     fi
 
-    # Configure dnf-automatic for security updates only
-    cat > /etc/dnf/automatic.conf << 'EOF'
+    # Configure dnf-automatic based on user choice
+    if [[ "$UPDATE_TYPE" == "security" ]]; then
+        UPGRADE_TYPE_SETTING="security"
+        echo -e "  ${BLUE}Configuring for security updates only${NC}"
+    else
+        UPGRADE_TYPE_SETTING="default"
+        echo -e "  ${BLUE}Configuring for all available updates${NC}"
+    fi
+    
+    cat > /etc/dnf/automatic.conf << EOF
 [commands]
 # What kind of upgrade to perform:
 # default                   = all available upgrades
 # security                  = only security upgrades
-upgrade_type = security
+upgrade_type = $UPGRADE_TYPE_SETTING
 random_sleep = 0
 
 # Whether updates should be downloaded when they are available
@@ -158,7 +202,7 @@ EOF
     # Enable and start the timer
     systemctl enable --now dnf-automatic.timer
     
-    echo -e "  ${GREEN}✓${NC} Configured dnf-automatic for RHEL/Fedora/Amazon Linux"
+    echo -e "  ${GREEN}✓${NC} Configured dnf-automatic for RHEL/Fedora/Amazon Linux (${UPDATE_TYPE} updates)"
 }
 
 echo -e "${GREEN}Setting up automatic security updates for $OS_ID...${NC}"
