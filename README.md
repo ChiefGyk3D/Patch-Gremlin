@@ -241,16 +241,97 @@ PATCH_GREMLIN_RETRY_DELAY=5         # Seconds between retries (default: 2)
 PATCH_GREMLIN_CURL_TIMEOUT=60       # HTTP timeout seconds (default: 30)
 ```
 
-## Files Installed
+## Monitoring Integration
 
+Patch Gremlin provides multiple ways to integrate with monitoring systems:
+
+### Health Check Script
+
+```bash
+# Run health check
+sudo ./health-check.sh
+
+# Exit codes:
+# 0 = Healthy
+# 1 = Warning (non-critical issues)
+# 2 = Critical (service broken)
 ```
-/usr/local/bin/update-notifier.sh          # Main notification script
-/etc/update-notifier/config.sh             # Custom secret name configuration
-/etc/systemd/system/update-notifier.service # Systemd service
-/etc/systemd/system/update-notifier.timer   # Daily timer
-/etc/apt/apt.conf.d/99discord-notification  # APT hook
-/etc/apt/apt.conf.d/50unattended-upgrades   # Security update config
+
+### Nagios/Icinga
+
+```bash
+# /etc/nagios/nrpe.cfg
+command[check_patch_gremlin]=/path/to/patch-gremlin/health-check.sh
+
+# Nagios service definition
+define service {
+    service_description     Patch Gremlin Health
+    check_command          check_nrpe!check_patch_gremlin
+    normal_check_interval  60
+    retry_check_interval   5
+}
 ```
+
+### Prometheus/Grafana
+
+```bash
+# Create metrics exporter script
+#!/bin/bash
+if ./health-check.sh &>/dev/null; then
+    echo "patch_gremlin_health 1"
+else
+    echo "patch_gremlin_health 0"
+fi
+echo "patch_gremlin_last_run $(stat -c %Y /var/log/patch-gremlin.log 2>/dev/null || echo 0)"
+```
+
+### Zabbix
+
+```bash
+# Zabbix agent configuration
+UserParameter=patch_gremlin.health,/path/to/health-check.sh >/dev/null 2>&1; echo $?
+UserParameter=patch_gremlin.last_notification,grep "SUCCESS: Notification delivery complete" /var/log/syslog | tail -1 | cut -d' ' -f1-3
+```
+
+### Log Monitoring
+
+Patch Gremlin logs to syslog with tag `patch-gremlin`. Monitor these patterns:
+
+```bash
+# Success patterns
+grep "SUCCESS: Notification delivery complete" /var/log/syslog
+grep "SUCCESS: Sent notification" /var/log/syslog
+
+# Error patterns
+grep "ERROR:" /var/log/syslog | grep patch-gremlin
+grep "All notification attempts failed" /var/log/syslog
+
+# Update activity
+grep "package(s) updated" /var/log/syslog | grep patch-gremlin
+```
+
+### Systemd Journal Monitoring
+
+```bash
+# Monitor service status
+journalctl -u update-notifier.service --since "1 hour ago"
+journalctl -u update-notifier.timer --since "1 day ago"
+
+# Follow logs in real-time
+journalctl -f -t patch-gremlin
+```
+
+### Alerting Rules
+
+Recommended alerts to configure:
+
+1. **Service Down**: `update-notifier.timer` inactive for >25 hours
+2. **Notification Failures**: Error logs from patch-gremlin in last 24h
+3. **No Updates**: No "package(s) updated" logs for >30 days (optional)
+4. **Health Check**: `health-check.sh` returns exit code 2
+5. **Doppler Auth**: "Doppler authentication failed" in logs
+
+
 
 ## Troubleshooting
 
