@@ -1,116 +1,71 @@
-# Quick Reference
+# Patch Gremlin Quick Reference
 
-## Installation
-
+## Installation Commands
 ```bash
-# 1. Install Doppler
+# Basic setup
 curl -sLf https://cli.doppler.com/install.sh | sh
+doppler login && sudo doppler login
+sudo doppler setup --project patch-gremlin --config production
 
-# 2. Authenticate
-doppler login
-sudo doppler login
-
-# 3. Setup project
-sudo doppler setup --project your-project --config your-config
-
-# 4. Configure secrets (customize names as needed)
-cp config.example.sh config.sh
-nano config.sh
-
-# 5. Run setup
-sudo ./setup-unattended-upgrades.sh
-```
-
-## Testing
-
-```bash
-# Test setup
-./test-setup.sh
-
-# Test notification
-sudo /usr/local/bin/update-notifier.sh
-
-# Dry run security updates
-sudo unattended-upgrade --dry-run --debug
-```
-
-## Doppler Commands
-
-```bash
-# View configuration
-doppler me
-sudo doppler me
-
-# List secrets
-doppler secrets
-sudo doppler secrets
-
-# Get specific secret
-doppler secrets get SYSTEM_UPDATE_DISCORD --plain
-sudo doppler secrets get MATRIX_USERNAME --plain
-
-# Add/update secrets
+# Add Discord webhook
 doppler secrets set SYSTEM_UPDATE_DISCORD="https://discord.com/api/webhooks/..."
-doppler secrets set MATRIX_HOMESERVER="https://matrix.chiefgyk3d.com"
-doppler secrets set MATRIX_USERNAME="username"
-doppler secrets set MATRIX_PASSWORD="password"
-doppler secrets set SYSTEM_UPDATE_MATRIX_ROOM="!roomid:server.com"
+
+# Install system
+source config.sh
+sudo -E ./setup-unattended-upgrades.sh
 ```
 
-## Systemd Commands
+## Testing Commands
+```bash
+# Health check
+sudo ./health-check.sh
 
+# Test notification (dry run)
+sudo PATCH_GREMLIN_DRY_RUN=true /usr/local/bin/update-notifier.sh
+
+# Send test notification
+sudo /usr/local/bin/update-notifier.sh
+```
+
+## Monitoring Commands
 ```bash
 # Check service status
-sudo systemctl status update-notifier.service
 sudo systemctl status update-notifier.timer
-
-# View timer schedule
-sudo systemctl list-timers update-notifier.timer
-
-# Manually trigger notification
-sudo systemctl start update-notifier.service
+sudo systemctl list-timers update-notifier*
 
 # View logs
-sudo journalctl -u update-notifier.service -n 50
-sudo journalctl -u update-notifier.timer -n 20
+sudo journalctl -t patch-gremlin --since "1 day ago"
+sudo journalctl -f -t patch-gremlin
+
+# Check last notification
+grep "SUCCESS: Notification delivery complete" /var/log/syslog | tail -1
 ```
 
-## File Locations
-
-```
-/usr/local/bin/update-notifier.sh          # Main script
-/etc/update-notifier/config.sh             # Secret name config
-/etc/systemd/system/update-notifier.service
-/etc/systemd/system/update-notifier.timer
-/etc/apt/apt.conf.d/99discord-notification
-/etc/apt/apt.conf.d/50unattended-upgrades
-/var/log/unattended-upgrades/              # Update logs
+## Environment Variables
+```bash
+PATCH_GREMLIN_DRY_RUN=true          # Test mode
+PATCH_GREMLIN_MAX_LOG_LINES=100     # Log lines (default: 50)
+PATCH_GREMLIN_RETRY_COUNT=5         # Retries (default: 3)
+PATCH_GREMLIN_CURL_TIMEOUT=60       # Timeout (default: 30s)
 ```
 
 ## Troubleshooting
-
 ```bash
-# Re-authenticate Doppler
+# Fix Doppler auth
 sudo doppler login
 sudo doppler setup --project your-project --config your-config
 
-# Reinstall config
-sudo cp config.sh /etc/update-notifier/config.sh
+# Check config
+sudo cat /etc/update-notifier/config.sh
 
-# Check logs
-tail -f /var/log/unattended-upgrades/unattended-upgrades.log
-sudo journalctl -u update-notifier.service -f
-
-# Fix hostname resolution
-sudo nano /etc/hosts  # Update 127.0.1.1 line
-
-# Verify Matrix credentials
-sudo doppler secrets get MATRIX_USERNAME --plain
-sudo doppler secrets get MATRIX_HOMESERVER --plain
+# Manual test
+sudo /usr/local/bin/update-notifier.sh
 ```
 
-## Uninstallation
-
-```bash
-sudo ./uninstall.sh
+## File Locations
+```
+/usr/local/bin/update-notifier.sh          # Main script
+/etc/update-notifier/config.sh             # Configuration
+/etc/systemd/system/update-notifier.*      # Service files
+/var/log/syslog                            # Logs (tag: patch-gremlin)
 ```
