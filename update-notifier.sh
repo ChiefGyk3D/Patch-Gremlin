@@ -45,7 +45,8 @@ else
     LOG_FILE="/var/log/unattended-upgrades/unattended-upgrades.log"
 fi
 HOSTNAME=$(hostname)
-LAST_RUN=$(date)
+LAST_RUN=$(date '+%Y-%m-%d %H:%M:%S %Z')
+LAST_RUN_UTC=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')
 
 # Retrieve secrets based on mode
 if [[ "$SECRET_MODE" == "local" ]]; then
@@ -127,14 +128,84 @@ if [[ -z "$DISCORD_WEBHOOK" ]] && [[ -z "$TEAMS_WEBHOOK" ]] && [[ -z "$SLACK_WEB
     exit 1
 fi
 
-# Read recent log entries
+# Read recent log entries and analyze what happened
 if [[ ! -f "$LOG_FILE" ]]; then
     echo "Warning: Log file $LOG_FILE not found. Sending notification anyway."
     LOG_OUTPUT="Log file not found at $LOG_FILE"
+    UPDATE_STATUS="unknown"
+    UPDATE_SUMMARY="Log file not available"
 else
-    # Properly escape for JSON: escape quotes, backslashes, and newlines
-    LOG_OUTPUT=$(tail -n 15 "$LOG_FILE" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+    # Get recent log entries
+    RECENT_LOG=$(tail -n 50 "$LOG_FILE")
+    
+    # Analyze what happened based on OS type
+    if [[ -f /var/log/unattended-upgrades/unattended-upgrades.log ]]; then
+        # Debian/Ubuntu - check for actual package installations
+        if echo "$RECENT_LOG" | grep -q "Packages that will be upgraded:"; then
+            UPGRADED_PACKAGES=$(echo "$RECENT_LOG" | grep -A 20 "Packages that will be upgraded:" | grep -E "^  [a-zA-Z]" | wc -l)
+            if [[ $UPGRADED_PACKAGES -gt 0 ]]; then
+                UPDATE_STATUS="updated"
+                UPDATE_SUMMARY="$UPGRADED_PACKAGES package(s) updated"
+            else
+                UPDATE_STATUS="no-updates"
+                UPDATE_SUMMARY="No updates available"
+            fi
+        elif echo "$RECENT_LOG" | grep -q "No packages found that can be upgraded unattended"; then
+            UPDATE_STATUS="no-updates"
+            UPDATE_SUMMARY="No updates available"
+        elif echo "$RECENT_LOG" | grep -q "Unattended-upgrades log started"; then
+            UPDATE_STATUS="no-updates"
+            UPDATE_SUMMARY="Update check completed, no changes"
+        else
+            UPDATE_STATUS="unknown"
+            UPDATE_SUMMARY="Update process completed"
+        fi
+    else
+        # RHEL/Fedora - check DNF logs
+        if echo "$RECENT_LOG" | grep -q "Upgraded:"; then
+            UPGRADED_COUNT=$(echo "$RECENT_LOG" | grep "Upgraded:" | tail -1 | grep -o "Upgraded: [0-9]*" | grep -o "[0-9]*")
+            UPDATE_STATUS="updated"
+            UPDATE_SUMMARY="$UPGRADED_COUNT package(s) updated"
+        elif echo "$RECENT_LOG" | grep -q "Nothing to do"; then
+            UPDATE_STATUS="no-updates"
+            UPDATE_SUMMARY="No updates available"
+        elif echo "$RECENT_LOG" | grep -q "Complete!"; then
+            # Check if any packages were actually installed/updated
+            if echo "$RECENT_LOG" | grep -E "(Installing|Upgrading|Updated|Installed):" | grep -v "Nothing to do" >/dev/null; then
+                UPDATE_STATUS="updated"
+                UPDATE_SUMMARY="Packages updated"
+            else
+                UPDATE_STATUS="no-updates"
+                UPDATE_SUMMARY="Update check completed, no changes"
+            fi
+        else
+            UPDATE_STATUS="unknown"
+            UPDATE_SUMMARY="Update process completed"
+        fi
+    fi
+    
+    # Prepare log output for notifications (last 15 lines, properly escaped)
+    LOG_OUTPUT=$(echo "$RECENT_LOG" | tail -n 15 | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
 fi
+
+# Set notification title and description based on status
+case "$UPDATE_STATUS" in
+    "updated")
+        NOTIFICATION_TITLE="System Updates Applied on $HOSTNAME"
+        NOTIFICATION_DESC="$UPDATE_SUMMARY at **$LAST_RUN**"
+        NOTIFICATION_COLOR=5814783  # Green
+        ;;
+    "no-updates")
+        NOTIFICATION_TITLE="System Update Check Complete on $HOSTNAME"
+        NOTIFICATION_DESC="$UPDATE_SUMMARY at **$LAST_RUN**"
+        NOTIFICATION_COLOR=3447003  # Blue
+        ;;
+    *)
+        NOTIFICATION_TITLE="System Update Process Complete on $HOSTNAME"
+        NOTIFICATION_DESC="$UPDATE_SUMMARY at **$LAST_RUN**"
+        NOTIFICATION_COLOR=15844367 # Yellow
+        ;;
+esac
 
 # Track success/failure
 NOTIFICATION_SENT=false
@@ -150,10 +221,10 @@ if [[ -n "$DISCORD_WEBHOOK" ]]; then
   "username": "Linux Updates",
   "embeds": [
     {
-      "title": "System Update Completed on $HOSTNAME",
-      "description": "Unattended-upgrades ran at **$LAST_RUN**.\n\n\`\`\`$LOG_OUTPUT\`\`\`",
-      "color": 5814783,
-      "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)",
+      "title": "$NOTIFICATION_TITLE",
+      "description": "$NOTIFICATION_DESC\n\n\`\`\`$LOG_OUTPUT\`\`\`",
+      "color": $NOTIFICATION_COLOR,
+      "timestamp": "$LAST_RUN_UTC",
       "footer": {
         "text": "System Update Notification"
       }
@@ -188,17 +259,17 @@ if [[ -n "$TEAMS_WEBHOOK" ]]; then
 {
   "@type": "MessageCard",
   "@context": "https://schema.org/extensions",
-  "summary": "System Update Completed on $HOSTNAME",
+  "summary": "$NOTIFICATION_TITLE",
   "themeColor": "0078D7",
-  "title": "🔄 System Update Completed",
+  "title": "🔄 $(echo "$NOTIFICATION_TITLE" | sed 's/on .*//')",
   "sections": [
     {
       "activityTitle": "Host: **$HOSTNAME**",
-      "activitySubtitle": "Update completed at $LAST_RUN",
+      "activitySubtitle": "$NOTIFICATION_DESC",
       "facts": [
         {
           "name": "Status:",
-          "value": "Security updates applied"
+          "value": "$UPDATE_SUMMARY"
         },
         {
           "name": "Log File:",
@@ -234,13 +305,13 @@ if [[ -n "$SLACK_WEBHOOK" ]]; then
     # Build Slack payload (Block Kit format)
     SLACK_PAYLOAD=$(cat <<EOF
 {
-  "text": "System Update Completed on $HOSTNAME",
+  "text": "$NOTIFICATION_TITLE",
   "blocks": [
     {
       "type": "header",
       "text": {
         "type": "plain_text",
-        "text": "🔄 System Update Completed"
+        "text": "🔄 $(echo "$NOTIFICATION_TITLE" | sed 's/on .*//')"
       }
     },
     {
@@ -252,7 +323,7 @@ if [[ -n "$SLACK_WEBHOOK" ]]; then
         },
         {
           "type": "mrkdwn",
-          "text": "*Time:*\\n$LAST_RUN"
+          "text": "*Status:*\\n$UPDATE_SUMMARY"
         }
       ]
     },
@@ -328,9 +399,9 @@ EOF
             # Create a simple text message (escape special characters for JSON)
             # Escape backslashes first, then quotes, then newlines
             MESSAGE_BODY=$(cat <<MSGEOF
-System Update Completed on $HOSTNAME
+$NOTIFICATION_TITLE
 
-Unattended-upgrades ran at $LAST_RUN
+$UPDATE_SUMMARY at $LAST_RUN
 
 Recent log:
 $MATRIX_LOG
@@ -379,7 +450,7 @@ MSGEOF
         
         MATRIX_PAYLOAD=$(cat <<EOF
 {
-  "text": "System Update Completed on $HOSTNAME\n\nUnattended-upgrades ran at $LAST_RUN\n\nRecent log:\n$MATRIX_LOG",
+  "text": "$NOTIFICATION_TITLE\n\n$UPDATE_SUMMARY at $LAST_RUN\n\nRecent log:\n$MATRIX_LOG",
   "format": "plain",
   "displayName": "Linux Updates"
 }
