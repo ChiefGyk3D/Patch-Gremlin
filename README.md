@@ -106,6 +106,9 @@ sudo -E ./test-setup.sh
 
 # Test notification manually
 sudo /usr/local/bin/update-notifier.sh
+
+# Test without sending (dry run)
+sudo PATCH_GREMLIN_DRY_RUN=true /usr/local/bin/update-notifier.sh
 ```
 
 ## How It Works
@@ -222,6 +225,21 @@ In Doppler, store just the **localpart** of your Matrix username (without `@` or
 - ❌ Wrong: `@username:matrix.org`
 
 The script will automatically extract the localpart if you accidentally include the full format.
+
+### Environment Variables
+
+Customize script behavior with environment variables:
+
+```bash
+# Testing and debugging
+PATCH_GREMLIN_DRY_RUN=true          # Test without sending notifications
+
+# Performance tuning
+PATCH_GREMLIN_MAX_LOG_LINES=100     # Log lines to include (default: 50)
+PATCH_GREMLIN_RETRY_COUNT=5         # HTTP retry attempts (default: 3)
+PATCH_GREMLIN_RETRY_DELAY=5         # Seconds between retries (default: 2)
+PATCH_GREMLIN_CURL_TIMEOUT=60       # HTTP timeout seconds (default: 30)
+```
 
 ## Files Installed
 
