@@ -105,6 +105,63 @@ else
     echo -e "\n${GREEN}Using preset schedule: ${UPDATE_SCHEDULE}${NC}"
     UPDATE_TIME="${UPDATE_TIME:-02:00}"
 fi
+
+# Ask about timezone (unless already set via environment)
+if [[ -z "$SYSTEM_TIMEZONE" ]]; then
+    CURRENT_TZ=$(timedatectl show --property=Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo "UTC")
+    echo ""
+    echo -e "${YELLOW}Timezone Configuration:${NC}"
+    echo "Current timezone: ${BLUE}$CURRENT_TZ${NC}"
+    echo "Current time: $(date)"
+    echo ""
+    read -p "Keep current timezone? (y/n) [default: y]: " -n 1 -r TZ_CHOICE
+    echo ""
+    
+    if [[ "$TZ_CHOICE" =~ ^[Nn]$ ]]; then
+        echo -e "${YELLOW}Select timezone:${NC}"
+        echo "  1) US/Eastern     2) US/Central     3) US/Mountain    4) US/Pacific"
+        echo "  5) Europe/London  6) Europe/Paris   7) Asia/Tokyo     8) UTC"
+        echo "  9) Other (manual entry)"
+        echo ""
+        read -p "Enter choice [1-9] (default: 8 - UTC): " -n 1 -r TZ_SELECTION
+        echo ""
+        
+        case "$TZ_SELECTION" in
+            1) NEW_TIMEZONE="US/Eastern" ;;
+            2) NEW_TIMEZONE="US/Central" ;;
+            3) NEW_TIMEZONE="US/Mountain" ;;
+            4) NEW_TIMEZONE="US/Pacific" ;;
+            5) NEW_TIMEZONE="Europe/London" ;;
+            6) NEW_TIMEZONE="Europe/Paris" ;;
+            7) NEW_TIMEZONE="Asia/Tokyo" ;;
+            9) 
+                echo "Enter timezone (e.g., America/New_York, Europe/Berlin):"
+                read -p "Timezone: " NEW_TIMEZONE
+                ;;
+            *) NEW_TIMEZONE="UTC" ;;
+        esac
+        
+        if [[ -n "$NEW_TIMEZONE" ]] && [[ "$NEW_TIMEZONE" != "$CURRENT_TZ" ]]; then
+            echo -e "${YELLOW}Setting timezone to: ${BLUE}$NEW_TIMEZONE${NC}"
+            if command -v timedatectl &>/dev/null; then
+                timedatectl set-timezone "$NEW_TIMEZONE" 2>/dev/null || {
+                    echo -e "${RED}Failed to set timezone with timedatectl${NC}"
+                    echo "You may need to set it manually after setup"
+                }
+            else
+                echo "$NEW_TIMEZONE" > /etc/timezone 2>/dev/null || {
+                    echo -e "${RED}Failed to set timezone${NC}"
+                    echo "You may need to set it manually after setup"
+                }
+            fi
+            echo "New time: $(date)"
+        fi
+    else
+        echo -e "${GREEN}Keeping current timezone: $CURRENT_TZ${NC}"
+    fi
+else
+    echo -e "\n${GREEN}Using preset timezone configuration${NC}"
+fi
 echo ""
 
 # Ask about secret storage method (unless already set via environment)
