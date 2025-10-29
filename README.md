@@ -12,7 +12,9 @@ Automated system update notifications for Debian and RHEL-based systems with Dis
 - 🔒 **Secure**: Uses Doppler CLI for credential management
 - 🎨 **Configurable**: Customize Doppler secret names to avoid conflicts
 - ⚙️ **Automated**: Integrates with unattended-upgrades and systemd
-- 📊 **Informative**: Rich notifications with hostname, timestamp, and logs
+- 🧠 **Intelligent**: Analyzes logs to distinguish between "5 packages updated" vs "no updates available"
+- 📊 **Informative**: Rich notifications with hostname, timezone-aware timestamps, and logs
+- 🌍 **Timezone-Aware**: Detects and configures system timezone during setup
 - 🔐 **Simple Auth**: Matrix uses username/password (no token generation needed)
 - 🖥️ **Multi-OS**: Supports Debian/Ubuntu and RHEL/Rocky/AlmaLinux/Amazon Linux/Fedora
 
@@ -87,6 +89,7 @@ sudo -E ./setup-unattended-upgrades.sh
 
 The setup script will:
 - Install and configure unattended-upgrades (Debian) or dnf-automatic (RHEL)
+- Configure timezone (detects current, offers common options)
 - Embed your custom Doppler secret names into the systemd service
 - Install notification script to `/usr/local/bin/`
 - Create systemd service and timer with your specified schedule
@@ -140,6 +143,32 @@ sudo /usr/local/bin/update-notifier.sh
 ```
 
 ## Configuration
+
+### Notification Types
+
+Patch Gremlin provides intelligent notifications based on what actually happened:
+
+- **🟢 Updates Applied**: "System Updates Applied on [hostname]" - when packages were actually installed
+- **🔵 No Updates**: "System Update Check Complete on [hostname]" - when no updates were available
+- **🟡 Unknown Status**: "System Update Process Complete on [hostname]" - when status is unclear
+
+All notifications include:
+- Timezone-aware timestamps (e.g., "2024-01-15 14:30:25 EST")
+- Package count when available (e.g., "5 package(s) updated")
+- Recent log entries for troubleshooting
+
+### Timezone Configuration
+
+During setup, the script will:
+1. Detect your current timezone
+2. Ask if you want to change it
+3. Offer common timezone options:
+   - US timezones (Eastern, Central, Mountain, Pacific)
+   - European timezones (London, Paris)
+   - Asia/Tokyo, UTC
+   - Manual entry option
+
+To preset timezone: `export SYSTEM_TIMEZONE=skip` before running setup.
 
 ### Doppler Secret Names
 
@@ -288,7 +317,9 @@ sudo ./uninstall.sh
 - **Notification script**:
   - Loads config from `/etc/update-notifier/config.sh`
   - Retrieves credentials from Doppler using custom secret names
-  - Sends formatted notifications to configured platforms
+  - Analyzes log files to determine actual update status
+  - Sends intelligent notifications with appropriate titles and colors
+  - Includes timezone-aware timestamps and package counts
 
 ## License
 
