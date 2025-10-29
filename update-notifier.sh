@@ -30,19 +30,34 @@ DOPPLER_TEAMS_SECRET="${DOPPLER_TEAMS_SECRET:-UPDATE_NOTIFIER_TEAMS_WEBHOOK}"
 DOPPLER_SLACK_SECRET="${DOPPLER_SLACK_SECRET:-UPDATE_NOTIFIER_SLACK_WEBHOOK}"
 
 # Configuration
-# Auto-detect update log file location based on OS
+# Auto-detect OS type and log file location
 if [[ -f /var/log/unattended-upgrades/unattended-upgrades.log ]]; then
     # Debian/Ubuntu
+    OS_TYPE="debian"
     LOG_FILE="/var/log/unattended-upgrades/unattended-upgrades.log"
 elif [[ -f /var/log/dnf.log ]]; then
     # RHEL/Fedora/Amazon Linux  
+    OS_TYPE="rhel"
     LOG_FILE="/var/log/dnf.log"
 elif [[ -f /var/log/yum.log ]]; then
     # Older RHEL/CentOS
+    OS_TYPE="rhel"
     LOG_FILE="/var/log/yum.log"
 else
-    # Fallback
-    LOG_FILE="/var/log/unattended-upgrades/unattended-upgrades.log"
+    # Fallback - try to detect from /etc/os-release
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        if [[ "$ID" =~ ^(debian|ubuntu)$ ]] || [[ "$ID_LIKE" =~ debian ]]; then
+            OS_TYPE="debian"
+            LOG_FILE="/var/log/unattended-upgrades/unattended-upgrades.log"
+        else
+            OS_TYPE="rhel"
+            LOG_FILE="/var/log/dnf.log"
+        fi
+    else
+        OS_TYPE="debian"
+        LOG_FILE="/var/log/unattended-upgrades/unattended-upgrades.log"
+    fi
 fi
 HOSTNAME=$(hostname)
 LAST_RUN=$(date '+%Y-%m-%d %H:%M:%S %Z')
@@ -139,10 +154,11 @@ else
     RECENT_LOG=$(tail -n 50 "$LOG_FILE")
     
     # Analyze what happened based on OS type
-    if [[ -f /var/log/unattended-upgrades/unattended-upgrades.log ]]; then
+    if [[ "$OS_TYPE" == "debian" ]]; then
         # Debian/Ubuntu - check for actual package installations
         if echo "$RECENT_LOG" | grep -q "Packages that will be upgraded:"; then
-            UPGRADED_PACKAGES=$(echo "$RECENT_LOG" | grep -A 20 "Packages that will be upgraded:" | grep -E "^  [a-zA-Z]" | wc -l)
+            # Count actual package lines (indented with spaces, containing package names)
+            UPGRADED_PACKAGES=$(echo "$RECENT_LOG" | grep -A 50 "Packages that will be upgraded:" | grep -E "^  [a-zA-Z0-9][a-zA-Z0-9+.-]*" | wc -l)
             if [[ $UPGRADED_PACKAGES -gt 0 ]]; then
                 UPDATE_STATUS="updated"
                 UPDATE_SUMMARY="$UPGRADED_PACKAGES package(s) updated"
@@ -161,17 +177,23 @@ else
             UPDATE_SUMMARY="Update process completed"
         fi
     else
-        # RHEL/Fedora - check DNF logs
-        if echo "$RECENT_LOG" | grep -q "Upgraded:"; then
-            UPGRADED_COUNT=$(echo "$RECENT_LOG" | grep "Upgraded:" | tail -1 | grep -o "Upgraded: [0-9]*" | grep -o "[0-9]*")
-            UPDATE_STATUS="updated"
-            UPDATE_SUMMARY="$UPGRADED_COUNT package(s) updated"
+        # RHEL/Fedora - check DNF/YUM logs
+        if echo "$RECENT_LOG" | grep -qE "(Upgraded|Updated):"; then
+            # Try to extract package count from upgrade summary
+            UPGRADED_COUNT=$(echo "$RECENT_LOG" | grep -E "(Upgraded|Updated):" | tail -1 | grep -oE "[0-9]+" | head -1)
+            if [[ -n "$UPGRADED_COUNT" ]] && [[ $UPGRADED_COUNT -gt 0 ]]; then
+                UPDATE_STATUS="updated"
+                UPDATE_SUMMARY="$UPGRADED_COUNT package(s) updated"
+            else
+                UPDATE_STATUS="updated"
+                UPDATE_SUMMARY="Packages updated"
+            fi
         elif echo "$RECENT_LOG" | grep -q "Nothing to do"; then
             UPDATE_STATUS="no-updates"
             UPDATE_SUMMARY="No updates available"
         elif echo "$RECENT_LOG" | grep -q "Complete!"; then
-            # Check if any packages were actually installed/updated
-            if echo "$RECENT_LOG" | grep -E "(Installing|Upgrading|Updated|Installed):" | grep -v "Nothing to do" >/dev/null; then
+            # Check if any packages were actually installed/updated in transaction
+            if echo "$RECENT_LOG" | grep -qE "(Installing|Upgrading|Updating).*:" && ! echo "$RECENT_LOG" | grep -q "Nothing to do"; then
                 UPDATE_STATUS="updated"
                 UPDATE_SUMMARY="Packages updated"
             else
@@ -184,8 +206,11 @@ else
         fi
     fi
     
-    # Prepare log output for notifications (last 15 lines, properly escaped)
-    LOG_OUTPUT=$(echo "$RECENT_LOG" | tail -n 15 | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+    # Prepare log output for notifications (last 15 lines, safely escaped)
+    LOG_OUTPUT=$(echo "$RECENT_LOG" | tail -n 15 | python3 -c "import sys, json; print(json.dumps(sys.stdin.read())[1:-1])" 2>/dev/null || {
+        # Fallback if python3 not available - basic escaping
+        echo "$RECENT_LOG" | tail -n 15 | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | tr '\n' ' ' | sed 's/  */ /g'
+    })
 fi
 
 # Set notification title and description based on status
@@ -366,7 +391,7 @@ if [[ "$MATRIX_CONFIGURED" == true ]]; then
         echo "Using Matrix API (homeserver: ${MATRIX_HOMESERVER})"
         
         # Extract just the localpart if username is in full format (@user:homeserver)
-        if [[ "$MATRIX_USERNAME" =~ ^@([^:]+): ]]; then
+        if [[ "$MATRIX_USERNAME" =~ ^@([^:]+):.*$ ]]; then
             MATRIX_USER_LOCALPART="${BASH_REMATCH[1]}"
         else
             MATRIX_USER_LOCALPART="$MATRIX_USERNAME"
