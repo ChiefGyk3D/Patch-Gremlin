@@ -4,7 +4,29 @@
 # Configures automatic security updates on Debian/RHEL with Discord/Matrix notifications
 # https://github.com/ChiefGyk3D/Patch-Gremlin
 
-set -e
+set -euo pipefail
+
+# Pre-installation checks
+echo -e "\033[0;34m=== Patch Gremlin Setup ===\033[0m"
+echo "Performing pre-installation checks..."
+
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   echo -e "\033[0;31mError: This script must be run as root\033[0m" 
+   echo "Please run: sudo -E $0"
+   exit 1
+fi
+
+# Check internet connectivity
+if ! curl -s --max-time 5 https://api.github.com >/dev/null; then
+    echo -e "\033[1;33mWarning: Limited internet connectivity detected\033[0m"
+fi
+
+# Check available disk space (need at least 100MB)
+AVAIL_SPACE=$(df /usr/local 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+if [[ $AVAIL_SPACE -lt 100000 ]]; then
+    echo -e "\033[1;33mWarning: Low disk space in /usr/local\033[0m"
+fi
 
 # Detect OS type
 if [[ -f /etc/os-release ]]; then
@@ -482,14 +504,9 @@ echo -e "    - Password:   ${YELLOW}$DOPPLER_MATRIX_PASSWORD_SECRET${NC}"
 echo -e "    - Room ID:    ${YELLOW}$DOPPLER_MATRIX_ROOM_ID_SECRET${NC}"
 echo ""
 
-# Check if running as root
-if [[ $EUID -ne 0 ]]; then
-   echo -e "${RED}Error: This script must be run as root${NC}" 
-   echo "Please run: sudo -E $0"
-   echo ""
-   echo -e "${YELLOW}Note: Use -E flag to preserve environment variables if you have custom secret names${NC}"
-   exit 1
-fi
+# Validate environment
+echo -e "\033[0;32m✓ Running as root\033[0m"
+echo -e "\033[0;32m✓ OS detected: $OS_ID $OS_VERSION (type: $OS_TYPE)\033[0m"
 
 # Check if Doppler is configured (only if using Doppler mode)
 if [[ "$SECRET_MODE" == "doppler" ]]; then
@@ -712,7 +729,28 @@ fi
 # Reload systemd
 systemctl daemon-reload
 
-echo -e "${GREEN}Configuration complete!${NC}"
+# Final validation
+echo -e "\033[1;33mPerforming final validation...\033[0m"
+
+# Test notification script
+if [[ -x /usr/local/bin/update-notifier.sh ]]; then
+    if PATCH_GREMLIN_DRY_RUN=true /usr/local/bin/update-notifier.sh &>/dev/null; then
+        echo -e "\033[0;32m✓ Notification script test passed\033[0m"
+    else
+        echo -e "\033[1;33m⚠ Notification script test failed (may need secrets configured)\033[0m"
+    fi
+fi
+
+# Check timer status
+if systemctl is-enabled update-notifier.timer &>/dev/null; then
+    echo -e "\033[0;32m✓ Timer enabled and scheduled\033[0m"
+    NEXT_RUN=$(systemctl list-timers update-notifier.timer --no-pager 2>/dev/null | grep update-notifier | awk '{print $1" "$2}' || echo "")
+    [[ -n "$NEXT_RUN" ]] && echo -e "  Next run: \033[0;34m$NEXT_RUN\033[0m"
+else
+    echo -e "\033[1;33m⚠ Timer not enabled\033[0m"
+fi
+
+echo -e "\033[0;32mConfiguration complete!\033[0m"
 echo ""
 echo -e "${YELLOW}Next steps:${NC}"
 echo "1. Install Doppler CLI if not already installed:"
@@ -757,5 +795,16 @@ echo "   export DOPPLER_DISCORD_SECRET='MY_CUSTOM_DISCORD_SECRET'"
 echo "   export DOPPLER_MATRIX_SECRET='MY_CUSTOM_MATRIX_SECRET'"
 echo "   sudo -E ./setup-unattended-upgrades.sh"
 echo ""
-echo -e "${GREEN}Automatic security updates are now configured!${NC}"
-echo "The system will check for updates daily and send notifications after applying them."
+echo ""
+echo -e "\033[0;32m🎉 Patch Gremlin installation complete!\033[0m"
+echo ""
+echo -e "\033[0;34mWhat happens next:\033[0m"
+echo "• System will automatically install $UPDATE_TYPE updates $UPDATE_SCHEDULE"
+echo "• Notifications will be sent to your configured platforms"
+echo "• Logs are available via: journalctl -t patch-gremlin"
+echo ""
+echo -e "\033[0;34mQuick commands:\033[0m"
+echo "• Test notification: sudo /usr/local/bin/update-notifier.sh"
+echo "• Check health: sudo /usr/local/bin/patch-gremlin-health-check.sh"
+echo "• View logs: sudo journalctl -t patch-gremlin --since '1 day ago'"
+echo "• Check timer: sudo systemctl list-timers update-notifier*"
