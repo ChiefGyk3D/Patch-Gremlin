@@ -5,6 +5,31 @@
 # Supports both Doppler and local file storage for secrets
 # https://github.com/ChiefGyk3D/Patch-Gremlin
 
+set -euo pipefail  # Exit on error, undefined vars, pipe failures
+
+# Configuration defaults (can be overridden by environment)
+MAX_LOG_LINES="${PATCH_GREMLIN_MAX_LOG_LINES:-50}"
+RETRY_COUNT="${PATCH_GREMLIN_RETRY_COUNT:-3}"
+RETRY_DELAY="${PATCH_GREMLIN_RETRY_DELAY:-2}"
+CURL_TIMEOUT="${PATCH_GREMLIN_CURL_TIMEOUT:-30}"
+DRY_RUN="${PATCH_GREMLIN_DRY_RUN:-false}"
+
+# Logging function
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
+    logger -t "patch-gremlin" "$*" 2>/dev/null || true
+}
+
+# Validate webhook URL format
+validate_webhook() {
+    local url="$1" platform="$2"
+    if [[ ! "$url" =~ ^https?:// ]]; then
+        log "WARNING: $platform webhook URL may be invalid: $url"
+        return 1
+    fi
+    return 0
+}
+
 # Check if using local secrets file
 if [[ -f /etc/update-notifier/secrets.conf ]]; then
     source /etc/update-notifier/secrets.conf
@@ -77,8 +102,14 @@ if [[ "$SECRET_MODE" == "local" ]]; then
 else
     # Check if Doppler CLI is installed
     if ! command -v doppler &> /dev/null; then
-        echo "Error: Doppler CLI is not installed. Please install it first."
-        echo "Visit: https://docs.doppler.com/docs/install-cli"
+        log "ERROR: Doppler CLI is not installed. Please install it first."
+        log "Visit: https://docs.doppler.com/docs/install-cli"
+        exit 1
+    fi
+    
+    # Test Doppler connectivity
+    if ! doppler me &>/dev/null; then
+        log "ERROR: Doppler authentication failed. Run 'doppler login'"
         exit 1
     fi
     
@@ -109,7 +140,7 @@ fi
 
 # Check if at least one notification method is configured
 if [[ -z "$DISCORD_WEBHOOK" ]] && [[ -z "$TEAMS_WEBHOOK" ]] && [[ -z "$SLACK_WEBHOOK" ]] && [[ "$MATRIX_CONFIGURED" == false ]]; then
-    echo "Error: No notification methods configured."
+    log "ERROR: No notification methods configured."
     echo ""
     if [[ "$SECRET_MODE" == "local" ]]; then
         echo "Using local file storage mode."
@@ -145,13 +176,13 @@ fi
 
 # Read recent log entries and analyze what happened
 if [[ ! -f "$LOG_FILE" ]]; then
-    echo "Warning: Log file $LOG_FILE not found. Sending notification anyway."
+    log "WARNING: Log file $LOG_FILE not found. Sending notification anyway."
     LOG_OUTPUT="Log file not found at $LOG_FILE"
     UPDATE_STATUS="unknown"
     UPDATE_SUMMARY="Log file not available"
 else
-    # Get recent log entries
-    RECENT_LOG=$(tail -n 50 "$LOG_FILE")
+    # Get recent log entries (configurable amount)
+    RECENT_LOG=$(tail -n "$MAX_LOG_LINES" "$LOG_FILE")
     
     # Analyze what happened based on OS type
     if [[ "$OS_TYPE" == "debian" ]]; then
@@ -211,6 +242,8 @@ else
         # Fallback if python3 not available - basic escaping
         echo "$RECENT_LOG" | tail -n 15 | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | tr '\n' ' ' | sed 's/  */ /g'
     })
+    
+    log "INFO: Detected OS: $OS_TYPE, Status: $UPDATE_STATUS, Summary: $UPDATE_SUMMARY"
 fi
 
 # Set notification title and description based on status
@@ -236,9 +269,49 @@ esac
 NOTIFICATION_SENT=false
 ERRORS=""
 
+# Function to send HTTP request with retry
+send_webhook() {
+    local url="$1" payload="$2" platform="$3"
+    
+    # Validate webhook URL
+    if ! validate_webhook "$url" "$platform"; then
+        return 1
+    fi
+    
+    # Skip actual sending in dry run mode
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log "DRY_RUN: Would send notification to $platform"
+        return 0
+    fi
+    
+    for ((i=1; i<=RETRY_COUNT; i++)); do
+        local response
+        response=$(curl -s -w "\n%{http_code}" --max-time "$CURL_TIMEOUT" \
+            -H "Content-Type: application/json" -X POST -d "$payload" "$url" 2>/dev/null || echo "\n000")
+        local http_code=$(echo "$response" | tail -n1)
+        local response_body=$(echo "$response" | head -n-1)
+        
+        if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+            log "SUCCESS: Sent notification to $platform (HTTP $http_code)"
+            return 0
+        else
+            log "WARNING: Failed to send to $platform (HTTP $http_code, attempt $i/$RETRY_COUNT)"
+            [[ $i -lt $RETRY_COUNT ]] && sleep "$RETRY_DELAY"
+        fi
+    done
+    
+    log "ERROR: All retry attempts failed for $platform"
+    return 1
+}
+
+# Validate configured webhooks
+[[ -n "$DISCORD_WEBHOOK" ]] && validate_webhook "$DISCORD_WEBHOOK" "Discord"
+[[ -n "$TEAMS_WEBHOOK" ]] && validate_webhook "$TEAMS_WEBHOOK" "Teams"
+[[ -n "$SLACK_WEBHOOK" ]] && validate_webhook "$SLACK_WEBHOOK" "Slack"
+
 # Send to Discord if webhook is configured
 if [[ -n "$DISCORD_WEBHOOK" ]]; then
-    echo "Sending notification to Discord..."
+    log "INFO: Sending notification to Discord..."
     
     # Build Discord payload with embedded message
     DISCORD_PAYLOAD=$(cat <<EOF
@@ -260,24 +333,16 @@ EOF
     )
 
     # Send notification to Discord
-    RESPONSE=$(curl -s -w "\n%{http_code}" -H "Content-Type: application/json" -X POST -d "$DISCORD_PAYLOAD" "$DISCORD_WEBHOOK")
-    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    RESPONSE_BODY=$(echo "$RESPONSE" | head -n-1)
-
-    # Check if the request was successful
-    if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
-        echo "✓ Successfully sent notification to Discord (HTTP $HTTP_CODE)"
+    if send_webhook "$DISCORD_WEBHOOK" "$DISCORD_PAYLOAD" "Discord"; then
         NOTIFICATION_SENT=true
     else
-        echo "✗ Failed to send notification to Discord (HTTP $HTTP_CODE)"
-        echo "  Response: $RESPONSE_BODY"
-        ERRORS="${ERRORS}Discord: HTTP $HTTP_CODE\n"
+        ERRORS="${ERRORS}Discord: Failed after retries\n"
     fi
 fi
 
 # Send to Microsoft Teams if webhook is configured
 if [[ -n "$TEAMS_WEBHOOK" ]]; then
-    echo "Sending notification to Microsoft Teams..."
+    log "INFO: Sending notification to Microsoft Teams..."
     
     # Build Teams payload (Adaptive Card format)
     TEAMS_PAYLOAD=$(cat <<EOF
@@ -309,23 +374,16 @@ EOF
     )
 
     # Send notification to Teams
-    RESPONSE=$(curl -s -w "\n%{http_code}" -H "Content-Type: application/json" -X POST -d "$TEAMS_PAYLOAD" "$TEAMS_WEBHOOK")
-    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    RESPONSE_BODY=$(echo "$RESPONSE" | head -n-1)
-
-    if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
-        echo "✓ Successfully sent notification to Microsoft Teams (HTTP $HTTP_CODE)"
+    if send_webhook "$TEAMS_WEBHOOK" "$TEAMS_PAYLOAD" "Teams"; then
         NOTIFICATION_SENT=true
     else
-        echo "✗ Failed to send notification to Microsoft Teams (HTTP $HTTP_CODE)"
-        echo "  Response: $RESPONSE_BODY"
-        ERRORS="${ERRORS}Teams: HTTP $HTTP_CODE\n"
+        ERRORS="${ERRORS}Teams: Failed after retries\n"
     fi
 fi
 
 # Send to Slack if webhook is configured
 if [[ -n "$SLACK_WEBHOOK" ]]; then
-    echo "Sending notification to Slack..."
+    log "INFO: Sending notification to Slack..."
     
     # Build Slack payload (Block Kit format)
     SLACK_PAYLOAD=$(cat <<EOF
@@ -365,30 +423,23 @@ EOF
     )
 
     # Send notification to Slack
-    RESPONSE=$(curl -s -w "\n%{http_code}" -H "Content-Type: application/json" -X POST -d "$SLACK_PAYLOAD" "$SLACK_WEBHOOK")
-    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    RESPONSE_BODY=$(echo "$RESPONSE" | head -n-1)
-
-    if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
-        echo "✓ Successfully sent notification to Slack (HTTP $HTTP_CODE)"
+    if send_webhook "$SLACK_WEBHOOK" "$SLACK_PAYLOAD" "Slack"; then
         NOTIFICATION_SENT=true
     else
-        echo "✗ Failed to send notification to Slack (HTTP $HTTP_CODE)"
-        echo "  Response: $RESPONSE_BODY"
-        ERRORS="${ERRORS}Slack: HTTP $HTTP_CODE\n"
+        ERRORS="${ERRORS}Slack: Failed after retries\n"
     fi
 fi
 
 # Send to Matrix if configured
 if [[ "$MATRIX_CONFIGURED" == true ]]; then
-    echo "Sending notification to Matrix..."
+    log "INFO: Sending notification to Matrix..."
     
     # Format log output for Matrix (plain text with newlines)
     MATRIX_LOG=$(tail -n 15 "$LOG_FILE" 2>/dev/null || echo "Log file not found")
     
     if [[ "$MATRIX_USE_API" == true ]]; then
         # Use Matrix Client-Server API with username/password login
-        echo "Using Matrix API (homeserver: ${MATRIX_HOMESERVER})"
+        log "INFO: Using Matrix API (homeserver: ${MATRIX_HOMESERVER})"
         
         # Extract just the localpart if username is in full format (@user:homeserver)
         if [[ "$MATRIX_USERNAME" =~ ^@([^:]+):.*$ ]]; then
@@ -416,8 +467,8 @@ EOF
         ACCESS_TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
         
         if [[ -z "$ACCESS_TOKEN" ]]; then
-            echo "✗ Failed to login to Matrix"
-            echo "  Response: $LOGIN_RESPONSE"
+            log "ERROR: Failed to login to Matrix"
+            log "Response: $LOGIN_RESPONSE"
             ERRORS="${ERRORS}Matrix: Login failed\n"
         else
             # Step 2: Send message using the access token
@@ -460,18 +511,18 @@ MSGEOF
 
             # Check if the request was successful
             if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
-                echo "✓ Successfully sent notification to Matrix (HTTP $HTTP_CODE)"
+                log "SUCCESS: Sent notification to Matrix (HTTP $HTTP_CODE)"
                 NOTIFICATION_SENT=true
             else
-                echo "✗ Failed to send notification to Matrix (HTTP $HTTP_CODE)"
-                echo "  Response: $RESPONSE_BODY"
+                log "ERROR: Failed to send notification to Matrix (HTTP $HTTP_CODE)"
+                log "Response: $RESPONSE_BODY"
                 ERRORS="${ERRORS}Matrix: HTTP $HTTP_CODE\n"
             fi
         fi
         
     else
         # Use Matrix webhook (legacy/custom integration)
-        echo "Using Matrix webhook"
+        log "INFO: Using Matrix webhook"
         
         MATRIX_PAYLOAD=$(cat <<EOF
 {
@@ -494,22 +545,26 @@ EOF
 
         # Check if the request was successful
         if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
-            echo "✓ Successfully sent notification to Matrix (HTTP $HTTP_CODE)"
+            log "SUCCESS: Sent notification to Matrix (HTTP $HTTP_CODE)"
             NOTIFICATION_SENT=true
         else
-            echo "✗ Failed to send notification to Matrix (HTTP $HTTP_CODE)"
-            echo "  Response: $RESPONSE_BODY"
+            log "ERROR: Failed to send notification to Matrix (HTTP $HTTP_CODE)"
+            log "Response: $RESPONSE_BODY"
             ERRORS="${ERRORS}Matrix: HTTP $HTTP_CODE\n"
         fi
     fi
 fi
 
-# Exit with appropriate status
-if [[ "$NOTIFICATION_SENT" == true ]]; then
-    echo "Notification delivery complete"
+# Summary and exit
+if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY_RUN: Notification simulation complete"
+    exit 0
+elif [[ "$NOTIFICATION_SENT" == true ]]; then
+    log "SUCCESS: Notification delivery complete"
     exit 0
 else
-    echo "Error: All notification attempts failed"
-    echo -e "$ERRORS"
+    log "ERROR: All notification attempts failed"
+    log "Errors: $ERRORS"
+    # In production, you might want to send to a fallback notification method here
     exit 1
 fi
