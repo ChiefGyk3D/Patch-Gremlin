@@ -16,8 +16,13 @@ DRY_RUN="${PATCH_GREMLIN_DRY_RUN:-false}"
 
 # Logging function
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
+    # Always log to syslog
     logger -t "patch-gremlin" "$*" 2>/dev/null || true
+    
+    # Only echo to stderr if not running via systemd (interactive mode)
+    if [[ -z "${INVOCATION_ID:-}" ]]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
+    fi
 }
 
 # Validate webhook URL format
