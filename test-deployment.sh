@@ -71,6 +71,7 @@ echo ""
 
 # Test 2: Check Secret Storage Mode
 echo -e "${BLUE}═══ Test 2: Secret Storage Mode ═══${NC}"
+test2_pass=true
 
 # Check which mode is configured
 if [[ -f /etc/update-notifier/secrets.conf ]]; then
@@ -83,7 +84,41 @@ if [[ -f /etc/update-notifier/secrets.conf ]]; then
         echo -e "${GREEN}✓${NC} File permissions are secure (600)"
     else
         echo -e "${YELLOW}⚠${NC} File permissions: $perms (should be 600)"
+        echo "   Fix with: sudo chmod 600 /etc/update-notifier/secrets.conf"
+        test2_pass=false
     fi
+    
+    # Check if at least one webhook is configured
+    webhook_count=0
+    if grep -q '^DISCORD_WEBHOOK=.\+' /etc/update-notifier/secrets.conf 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Discord webhook configured"
+        ((webhook_count++))
+    fi
+    if grep -q '^TEAMS_WEBHOOK=.\+' /etc/update-notifier/secrets.conf 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Teams webhook configured"
+        ((webhook_count++))
+    fi
+    if grep -q '^SLACK_WEBHOOK=.\+' /etc/update-notifier/secrets.conf 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Slack webhook configured"
+        ((webhook_count++))
+    fi
+    if grep -q '^MATRIX_WEBHOOK=.\+' /etc/update-notifier/secrets.conf 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Matrix webhook configured"
+        ((webhook_count++))
+    fi
+    if grep -q '^MATRIX_HOMESERVER=.\+' /etc/update-notifier/secrets.conf 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Matrix API configured"
+        ((webhook_count++))
+    fi
+    
+    if [[ $webhook_count -eq 0 ]]; then
+        echo -e "${RED}✗${NC} No webhooks configured in secrets file"
+        echo "   Edit: sudo nano /etc/update-notifier/secrets.conf"
+        test2_pass=false
+    else
+        echo -e "${GREEN}✓${NC} $webhook_count platform(s) configured"
+    fi
+    
 elif systemctl show update-notifier.service | grep -q "DOPPLER_TOKEN="; then
     echo -e "${GREEN}✓${NC} Doppler mode: Token configured in systemd"
     SECRET_MODE="doppler"
@@ -92,14 +127,31 @@ elif systemctl show update-notifier.service | grep -q "DOPPLER_TOKEN="; then
     if command -v doppler &>/dev/null; then
         echo -e "${GREEN}✓${NC} Doppler CLI is installed"
     else
-        echo -e "${RED}✗${NC} Doppler CLI not found"
+        echo -e "${YELLOW}⚠${NC} Doppler CLI not found (not required for service operation)"
+        echo "   The service will work without CLI (uses embedded token)"
     fi
+    
+    # Verify service has token
+    if systemctl show update-notifier.service | grep -q "DOPPLER_TOKEN=dp.st."; then
+        echo -e "${GREEN}✓${NC} Valid Doppler service token format in systemd"
+    else
+        echo -e "${RED}✗${NC} Invalid or missing Doppler token in systemd service"
+        test2_pass=false
+    fi
+    
 else
     echo -e "${RED}✗${NC} Cannot determine secret storage mode"
+    echo "   Neither /etc/update-notifier/secrets.conf nor systemd DOPPLER_TOKEN found"
+    echo "   Re-run setup: sudo ./setup-unattended-upgrades.sh"
     SECRET_MODE="unknown"
+    test2_pass=false
 fi
 
-echo -e "${GREEN}Test 2: PASSED${NC}"
+if [[ "$test2_pass" == "true" ]]; then
+    echo -e "${GREEN}Test 2: PASSED${NC}"
+else
+    echo -e "${RED}Test 2: FAILED${NC}"
+fi
 echo ""
 
 # Test 3: Systemd Service Status
@@ -155,14 +207,20 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         echo "Waiting 5 seconds for notification to send..."
         sleep 5
         
-        echo "Checking service status..."
-        if systemctl status update-notifier.service --no-pager; then
-            echo -e "${GREEN}✓${NC} Service completed successfully"
+        echo "Checking service results..."
+        systemctl status update-notifier.service --no-pager || true
+        
+        # Check if service completed successfully (exit code 0)
+        # Note: systemctl status returns non-zero for "inactive" even if service succeeded
+        if systemctl show update-notifier.service --property=ExecMainStatus --value | grep -q "^0$"; then
             echo ""
+            echo -e "${GREEN}✓${NC} Service completed successfully (exit code 0)"
             echo "Check your configured notification channels for the update report!"
             echo -e "${GREEN}Test 4: PASSED${NC}"
         else
-            echo -e "${RED}✗${NC} Service failed"
+            exit_code=$(systemctl show update-notifier.service --property=ExecMainStatus --value)
+            echo ""
+            echo -e "${RED}✗${NC} Service failed with exit code: $exit_code"
             echo "Check logs: journalctl -u update-notifier.service -n 50"
             echo -e "${RED}Test 4: FAILED${NC}"
         fi
