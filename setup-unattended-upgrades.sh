@@ -40,7 +40,7 @@ if [[ -f /etc/os-release ]]; then
     . /etc/os-release
     OS_ID="${ID}"
     OS_VERSION="${VERSION_ID}"
-    OS_LIKE="${ID_LIKE}"
+    OS_LIKE="${ID_LIKE:-}"
 else
     echo "Error: Cannot detect OS type. /etc/os-release not found."
     exit 1
