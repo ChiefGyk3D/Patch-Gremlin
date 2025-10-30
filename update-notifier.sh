@@ -27,21 +27,69 @@ validate_webhook() {
         log "WARNING: $platform webhook URL may be invalid: $url"
         return 1
     fi
+    # Additional validation for common webhook patterns
+    case "$platform" in
+        "Discord")
+            if [[ ! "$url" =~ discord\.com/api/webhooks/ ]]; then
+                log "WARNING: $platform URL doesn't match expected Discord webhook pattern"
+            fi
+            ;;
+        "Teams")
+            if [[ ! "$url" =~ outlook\.office\.com/webhook/ ]]; then
+                log "WARNING: $platform URL doesn't match expected Teams webhook pattern"
+            fi
+            ;;
+        "Slack")
+            if [[ ! "$url" =~ hooks\.slack\.com/services/ ]]; then
+                log "WARNING: $platform URL doesn't match expected Slack webhook pattern"
+            fi
+            ;;
+    esac
     return 0
 }
 
-# Check if using local secrets file
-if [[ -f /etc/update-notifier/secrets.conf ]]; then
-    source /etc/update-notifier/secrets.conf
-    SECRET_MODE="${SECRET_MODE:-local}"
-fi
+# Comprehensive validation function
+validate_environment() {
+    local errors=0
+    
+    # Check required commands
+    for cmd in curl grep awk sed tail; do
+        if ! command -v "$cmd" &>/dev/null; then
+            log "ERROR: Required command not found: $cmd"
+            ((errors++))
+        fi
+    done
+    
+    # Validate OS detection
+    if [[ "$OS_TYPE" != "debian" ]] && [[ "$OS_TYPE" != "rhel" ]]; then
+        log "ERROR: Unsupported OS type: $OS_TYPE"
+        ((errors++))
+    fi
+    
+    # Check log file permissions
+    if [[ -f "$LOG_FILE" ]] && [[ ! -r "$LOG_FILE" ]]; then
+        log "ERROR: Cannot read log file: $LOG_FILE"
+        ((errors++))
+    fi
+    
+    return $errors
+}
 
-# Load configuration from file if it exists
+# Initialize SECRET_MODE with default
+SECRET_MODE="${SECRET_MODE:-doppler}"
+
+# Load configuration from file if it exists first
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/config.sh" ]]; then
     source "$SCRIPT_DIR/config.sh"
 elif [[ -f /etc/update-notifier/config.sh ]]; then
     source /etc/update-notifier/config.sh
+fi
+
+# Check if using local secrets file and override mode
+if [[ -f /etc/update-notifier/secrets.conf ]]; then
+    source /etc/update-notifier/secrets.conf
+    SECRET_MODE="local"
 fi
 
 # Configuration - Customize these Doppler secret names to avoid conflicts
@@ -87,6 +135,12 @@ fi
 HOSTNAME=$(hostname)
 LAST_RUN=$(date '+%Y-%m-%d %H:%M:%S %Z')
 LAST_RUN_UTC=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')
+
+# Validate environment before proceeding
+if ! validate_environment; then
+    log "ERROR: Environment validation failed"
+    exit 1
+fi
 
 # Retrieve secrets based on mode
 if [[ "$SECRET_MODE" == "local" ]]; then
@@ -181,15 +235,20 @@ if [[ ! -f "$LOG_FILE" ]]; then
     UPDATE_STATUS="unknown"
     UPDATE_SUMMARY="Log file not available"
 else
-    # Get recent log entries (configurable amount)
-    RECENT_LOG=$(tail -n "$MAX_LOG_LINES" "$LOG_FILE")
+    # Create a snapshot to avoid race conditions with active logging
+    TEMP_LOG=$(mktemp)
+    trap "rm -f $TEMP_LOG" EXIT
+    cp "$LOG_FILE" "$TEMP_LOG" 2>/dev/null || cat "$LOG_FILE" > "$TEMP_LOG"
     
-    # Analyze what happened based on OS type
+    # Get recent log entries (configurable amount)
+    RECENT_LOG=$(tail -n "$MAX_LOG_LINES" "$TEMP_LOG")
+    
+    # Analyze what happened based on OS type with robust pattern matching
     if [[ "$OS_TYPE" == "debian" ]]; then
         # Debian/Ubuntu - check for actual package installations
-        if echo "$RECENT_LOG" | grep -q "Packages that will be upgraded:"; then
-            # Count actual package lines (indented with spaces, containing package names)
-            UPGRADED_PACKAGES=$(echo "$RECENT_LOG" | grep -A 50 "Packages that will be upgraded:" | grep -E "^  [a-zA-Z0-9][a-zA-Z0-9+.-]*" | wc -l)
+        if echo "$RECENT_LOG" | grep -qE "(Packages that will be upgraded|The following packages will be upgraded):"; then
+            # Count actual package lines with multiple patterns
+            UPGRADED_PACKAGES=$(echo "$RECENT_LOG" | grep -A 50 -E "(Packages that will be upgraded|The following packages will be upgraded):" | grep -E "^  [a-zA-Z0-9][a-zA-Z0-9+.-]*|^[a-zA-Z0-9][a-zA-Z0-9+.-]*" | wc -l)
             if [[ $UPGRADED_PACKAGES -gt 0 ]]; then
                 UPDATE_STATUS="updated"
                 UPDATE_SUMMARY="$UPGRADED_PACKAGES package(s) updated"
@@ -197,21 +256,31 @@ else
                 UPDATE_STATUS="no-updates"
                 UPDATE_SUMMARY="No updates available"
             fi
-        elif echo "$RECENT_LOG" | grep -q "No packages found that can be upgraded unattended"; then
+        elif echo "$RECENT_LOG" | grep -qE "(No packages found that can be upgraded|No upgrades available)"; then
             UPDATE_STATUS="no-updates"
             UPDATE_SUMMARY="No updates available"
-        elif echo "$RECENT_LOG" | grep -q "Unattended-upgrades log started"; then
-            UPDATE_STATUS="no-updates"
-            UPDATE_SUMMARY="Update check completed, no changes"
+        elif echo "$RECENT_LOG" | grep -qE "(Unattended-upgrades log started|Starting unattended upgrades)"; then
+            # Check if any actual upgrades happened
+            if echo "$RECENT_LOG" | grep -qE "(upgraded|installed|configured)"; then
+                UPDATE_STATUS="updated"
+                UPDATE_SUMMARY="Packages updated"
+            else
+                UPDATE_STATUS="no-updates"
+                UPDATE_SUMMARY="Update check completed, no changes"
+            fi
         else
             UPDATE_STATUS="unknown"
             UPDATE_SUMMARY="Update process completed"
         fi
     else
-        # RHEL/Fedora - check DNF/YUM logs
-        if echo "$RECENT_LOG" | grep -qE "(Upgraded|Updated):"; then
-            # Try to extract package count from upgrade summary
-            UPGRADED_COUNT=$(echo "$RECENT_LOG" | grep -E "(Upgraded|Updated):" | tail -1 | grep -oE "[0-9]+" | head -1)
+        # RHEL/Fedora - check DNF/YUM logs with improved patterns
+        if echo "$RECENT_LOG" | grep -qE "(Upgraded|Updated|Installed):"; then
+            # Try multiple methods to extract package count
+            UPGRADED_COUNT=$(echo "$RECENT_LOG" | grep -E "(Upgraded|Updated|Installed):" | tail -1 | grep -oE "[0-9]+" | head -1)
+            if [[ -z "$UPGRADED_COUNT" ]]; then
+                # Fallback: count package lines
+                UPGRADED_COUNT=$(echo "$RECENT_LOG" | grep -E "(Upgrading|Installing|Updating)" | wc -l)
+            fi
             if [[ -n "$UPGRADED_COUNT" ]] && [[ $UPGRADED_COUNT -gt 0 ]]; then
                 UPDATE_STATUS="updated"
                 UPDATE_SUMMARY="$UPGRADED_COUNT package(s) updated"
@@ -219,12 +288,12 @@ else
                 UPDATE_STATUS="updated"
                 UPDATE_SUMMARY="Packages updated"
             fi
-        elif echo "$RECENT_LOG" | grep -q "Nothing to do"; then
+        elif echo "$RECENT_LOG" | grep -qE "(Nothing to do|No packages marked for update)"; then
             UPDATE_STATUS="no-updates"
             UPDATE_SUMMARY="No updates available"
-        elif echo "$RECENT_LOG" | grep -q "Complete!"; then
-            # Check if any packages were actually installed/updated in transaction
-            if echo "$RECENT_LOG" | grep -qE "(Installing|Upgrading|Updating).*:" && ! echo "$RECENT_LOG" | grep -q "Nothing to do"; then
+        elif echo "$RECENT_LOG" | grep -qE "(Complete!|Transaction complete)"; then
+            # Check if any packages were actually processed
+            if echo "$RECENT_LOG" | grep -qE "(Installing|Upgrading|Updating).*:" && ! echo "$RECENT_LOG" | grep -qE "(Nothing to do|No packages)"; then
                 UPDATE_STATUS="updated"
                 UPDATE_SUMMARY="Packages updated"
             else
@@ -238,9 +307,9 @@ else
     fi
     
     # Prepare log output for notifications (last 15 lines, safely escaped)
-    LOG_OUTPUT=$(echo "$RECENT_LOG" | tail -n 15 | python3 -c "import sys, json; print(json.dumps(sys.stdin.read())[1:-1])" 2>/dev/null || {
-        # Fallback if python3 not available - basic escaping
-        echo "$RECENT_LOG" | tail -n 15 | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | tr '\n' ' ' | sed 's/  */ /g'
+    LOG_OUTPUT=$(tail -n 15 "$TEMP_LOG" | python3 -c "import sys, json; print(json.dumps(sys.stdin.read())[1:-1])" 2>/dev/null || {
+        # Robust fallback escaping for JSON
+        tail -n 15 "$TEMP_LOG" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed "s/'/\\'/g" | sed 's/\t/\\t/g' | sed 's/\r/\\r/g' | tr '\n' ' ' | sed 's/  */ /g' | sed 's/[[:cntrl:]]//g'
     })
     
     log "INFO: Detected OS: $OS_TYPE, Status: $UPDATE_STATUS, Summary: $UPDATE_SUMMARY"
@@ -435,7 +504,7 @@ if [[ "$MATRIX_CONFIGURED" == true ]]; then
     log "INFO: Sending notification to Matrix..."
     
     # Format log output for Matrix (plain text with newlines)
-    MATRIX_LOG=$(tail -n 15 "$LOG_FILE" 2>/dev/null || echo "Log file not found")
+    MATRIX_LOG=$(tail -n 15 "$TEMP_LOG" 2>/dev/null || echo "Log file not found")
     
     if [[ "$MATRIX_USE_API" == true ]]; then
         # Use Matrix Client-Server API with username/password login
@@ -468,7 +537,9 @@ EOF
         
         if [[ -z "$ACCESS_TOKEN" ]]; then
             log "ERROR: Failed to login to Matrix"
-            log "Response: $LOGIN_RESPONSE"
+            # Log error without exposing credentials
+            ERROR_TYPE=$(echo "$LOGIN_RESPONSE" | grep -o '"errcode":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+            log "Error type: $ERROR_TYPE"
             ERRORS="${ERRORS}Matrix: Login failed\n"
         else
             # Step 2: Send message using the access token
