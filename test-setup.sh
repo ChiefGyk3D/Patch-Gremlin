@@ -74,14 +74,20 @@ echo -e "\n${YELLOW}Checking Doppler authentication...${NC}"
 check_doppler_auth() {
     local max_attempts=3
     local attempt=1
+    local temp_file=$(mktemp)
     
     while [[ $attempt -le $max_attempts ]]; do
-        if timeout 10 doppler me &>/dev/null; then
+        # Use temp file to avoid race conditions with concurrent doppler calls
+        if timeout 10 doppler me > "$temp_file" 2>&1; then
+            rm -f "$temp_file"
             return 0
         fi
         ((attempt++))
-        [[ $attempt -le $max_attempts ]] && sleep 2
+        if [[ $attempt -le $max_attempts ]]; then
+            sleep $((attempt * 2))  # Exponential backoff
+        fi
     done
+    rm -f "$temp_file"
     return 1
 }
 
