@@ -17,9 +17,11 @@ check_file() {
     local file="$1" desc="$2"
     if [[ -f "$file" ]]; then
         log "✓ $desc exists: $file"
+        return 0
     else
         log "✗ $desc missing: $file"
         ((ERRORS++))
+        return 1
     fi
 }
 
@@ -27,9 +29,15 @@ check_service() {
     local service="$1"
     if systemctl is-active "$service" &>/dev/null; then
         log "✓ Service active: $service"
-    else
+        return 0
+    elif systemctl list-unit-files "$service" &>/dev/null; then
         log "⚠ Service inactive: $service"
         ((WARNINGS++))
+        return 1
+    else
+        log "✗ Service not found: $service"
+        ((ERRORS++))
+        return 2
     fi
 }
 
