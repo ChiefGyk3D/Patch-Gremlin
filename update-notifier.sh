@@ -255,6 +255,25 @@ if [[ -z "$DISCORD_WEBHOOK" ]] && [[ -z "$TEAMS_WEBHOOK" ]] && [[ -z "$SLACK_WEB
     exit 1
 fi
 
+# Check for available updates (including non-security updates)
+AVAILABLE_UPDATES=0
+AVAILABLE_PACKAGES=""
+if [[ "$OS_TYPE" == "debian" ]]; then
+    # Run apt list --upgradable to check for any available updates
+    AVAILABLE_PACKAGES=$(apt list --upgradable 2>/dev/null | grep "upgradable" | awk -F'/' '{print $1}' | head -n 10 | tr '\n' ', ' | sed 's/, $//')
+    AVAILABLE_UPDATES=$(apt list --upgradable 2>/dev/null | grep -c "upgradable" || echo "0")
+    if [[ "$AVAILABLE_UPDATES" -gt 0 ]]; then
+        log "INFO: Found $AVAILABLE_UPDATES upgradable packages (including non-security updates): $AVAILABLE_PACKAGES"
+    fi
+elif [[ "$OS_TYPE" == "rhel" ]]; then
+    # Check for available updates on RHEL-based systems
+    AVAILABLE_PACKAGES=$(dnf check-update -q 2>/dev/null | grep -v "^$" | awk '{print $1}' | head -n 10 | tr '\n' ', ' | sed 's/, $//')
+    AVAILABLE_UPDATES=$(dnf check-update -q 2>/dev/null | grep -v "^$" | wc -l || echo "0")
+    if [[ "$AVAILABLE_UPDATES" -gt 0 ]]; then
+        log "INFO: Found $AVAILABLE_UPDATES upgradable packages (including non-security updates): $AVAILABLE_PACKAGES"
+    fi
+fi
+
 # Read recent log entries and analyze what happened
 if [[ ! -f "$LOG_FILE" ]]; then
     log "WARNING: Log file $LOG_FILE not found. Sending notification anyway."
@@ -340,6 +359,11 @@ else
     if grep -q "packages upgraded" "$TEMP_LOG" 2>/dev/null; then
         PACKAGE_COUNT=$(grep "packages upgraded" "$TEMP_LOG" | tail -n 1 | awk '{print $1}')
         HUMAN_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded"
+    elif [[ "$AVAILABLE_UPDATES" -gt 0 ]]; then
+        HUMAN_SUMMARY="📦 Updates Available: ${AVAILABLE_UPDATES} non-security packages\n   Packages: ${AVAILABLE_PACKAGES}"
+        if [[ "$AVAILABLE_UPDATES" -gt 10 ]]; then
+            HUMAN_SUMMARY="${HUMAN_SUMMARY}... and $((AVAILABLE_UPDATES - 10)) more"
+        fi
     elif grep -q "No packages found that can be upgraded" "$TEMP_LOG" 2>/dev/null; then
         HUMAN_SUMMARY="✅ System Status: No updates available"
     fi
@@ -568,6 +592,11 @@ if [[ "$MATRIX_CONFIGURED" == true ]]; then
     if grep -q "packages upgraded" "$TEMP_LOG" 2>/dev/null; then
         PACKAGE_COUNT=$(grep "packages upgraded" "$TEMP_LOG" | tail -n 1 | awk '{print $1}')
         MATRIX_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded"
+    elif [[ "$AVAILABLE_UPDATES" -gt 0 ]]; then
+        MATRIX_SUMMARY="📦 Updates Available: ${AVAILABLE_UPDATES} non-security packages\n   Packages: ${AVAILABLE_PACKAGES}"
+        if [[ "$AVAILABLE_UPDATES" -gt 10 ]]; then
+            MATRIX_SUMMARY="${MATRIX_SUMMARY}... and $((AVAILABLE_UPDATES - 10)) more"
+        fi
     elif grep -q "No packages found that can be upgraded" "$TEMP_LOG" 2>/dev/null; then
         MATRIX_SUMMARY="✅ System Status: No updates available"
     fi
