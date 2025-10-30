@@ -800,6 +800,12 @@ fi
 # Reload systemd
 systemctl daemon-reload
 
+# Enable and start the notification timer
+echo -e "\033[1;33mEnabling and starting timers...\033[0m"
+systemctl enable update-notifier.timer
+systemctl start update-notifier.timer
+echo -e "\033[0;32m✓ Notification timer enabled and started\033[0m"
+
 # Final validation
 echo -e "\033[1;33mPerforming final validation...\033[0m"
 
