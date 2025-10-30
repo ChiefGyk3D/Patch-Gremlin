@@ -85,12 +85,10 @@ echo ""
 echo -e "${BLUE}═══ Test 2: Secret Storage Mode ═══${NC}"
 test2_pass=true
 
-# Debug: Show what we're checking
-echo "Checking for secret storage configuration..."
-echo "  - Looking for: /etc/update-notifier/secrets.conf"
-echo "  - Looking for: DOPPLER_TOKEN in systemd service"
-
 # Check which mode is configured
+# First, get systemd environment to a variable (more reliable than piping in conditionals)
+SYSTEMD_ENV=$(systemctl show update-notifier.service 2>/dev/null | grep "^Environment=" || echo "")
+
 if [[ -f /etc/update-notifier/secrets.conf ]]; then
     echo -e "${GREEN}✓${NC} Local mode: /etc/update-notifier/secrets.conf exists"
     SECRET_MODE="local"
@@ -136,7 +134,7 @@ if [[ -f /etc/update-notifier/secrets.conf ]]; then
         echo -e "${GREEN}✓${NC} $webhook_count platform(s) configured"
     fi
     
-elif systemctl show update-notifier.service 2>&1 | grep -q "DOPPLER_TOKEN="; then
+elif [[ "$SYSTEMD_ENV" =~ DOPPLER_TOKEN= ]]; then
     echo -e "${GREEN}✓${NC} Doppler mode: Token configured in systemd"
     SECRET_MODE="doppler"
     
@@ -149,7 +147,7 @@ elif systemctl show update-notifier.service 2>&1 | grep -q "DOPPLER_TOKEN="; the
     fi
     
     # Verify service has token
-    if systemctl show update-notifier.service 2>&1 | grep -q "DOPPLER_TOKEN=dp.st."; then
+    if [[ "$SYSTEMD_ENV" =~ DOPPLER_TOKEN=dp\.st\. ]]; then
         echo -e "${GREEN}✓${NC} Valid Doppler service token format in systemd"
     else
         echo -e "${RED}✗${NC} Invalid or missing Doppler token in systemd service"
@@ -160,8 +158,13 @@ else
     echo -e "${RED}✗${NC} Cannot determine secret storage mode"
     echo "   Neither /etc/update-notifier/secrets.conf nor systemd DOPPLER_TOKEN found"
     echo ""
-    echo "   Debug: Checking systemd service..."
-    systemctl show update-notifier.service 2>&1 | grep "Environment=" | head -3
+    if [[ -n "$SYSTEMD_ENV" ]]; then
+        echo "   Debug: Found systemd Environment but no DOPPLER_TOKEN:"
+        echo "   $SYSTEMD_ENV" | head -c 200
+        echo "..."
+    else
+        echo "   Debug: No systemd Environment found (service may not exist)"
+    fi
     echo ""
     echo "   Re-run setup: sudo ./setup-unattended-upgrades.sh"
     SECRET_MODE="unknown"
