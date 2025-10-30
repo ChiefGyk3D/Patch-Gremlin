@@ -222,7 +222,7 @@ fi
 
 # If using Doppler, ask for service token
 if [[ "$SECRET_MODE" == "doppler" ]]; then
-    if [[ -z "$DOPPLER_TOKEN" ]]; then
+    if [[ -z "${DOPPLER_TOKEN:-}" ]]; then
         echo ""
         echo -e "${YELLOW}Doppler Service Token Required:${NC}"
         echo "You need a Doppler service token to allow the notification script to access secrets."
@@ -233,12 +233,12 @@ if [[ "$SECRET_MODE" == "doppler" ]]; then
         echo "  OR visit: https://dashboard.doppler.com"
         echo ""
         read -p "Enter your Doppler service token: " DOPPLER_TOKEN
-        if [[ -z "$DOPPLER_TOKEN" ]]; then
+        if [[ -z "${DOPPLER_TOKEN:-}" ]]; then
             echo -e "${RED}Error: Doppler token is required when using Doppler mode${NC}"
             exit 1
         fi
         # Validate token format
-        if [[ ! "$DOPPLER_TOKEN" =~ ^dp\.st\. ]]; then
+        if [[ ! "${DOPPLER_TOKEN:-}" =~ ^dp\.st\. ]]; then
             echo -e "${YELLOW}Warning: Token doesn't start with 'dp.st.' - it may not be valid${NC}"
         fi
     else
@@ -263,8 +263,10 @@ load_config_safely() {
     # Check for valid export statements only
     if grep -q '^[[:space:]]*export[[:space:]]\+[A-Z_][A-Z0-9_]*=' "$config_file"; then
         # Create temp file with only export lines
-        local temp_config=$(mktemp)
+        local temp_config
+        temp_config=$(mktemp)
         grep '^[[:space:]]*export[[:space:]]\+[A-Z_][A-Z0-9_]*=' "$config_file" > "$temp_config"
+        # shellcheck source=/dev/null
         source "$temp_config"
         rm -f "$temp_config"
     else
@@ -353,7 +355,7 @@ install_debian_updates() {
     
     # Backup existing config if it exists
     if [[ -f /etc/apt/apt.conf.d/50unattended-upgrades ]]; then
-        cp /etc/apt/apt.conf.d/50unattended-upgrades /etc/apt/apt.conf.d/50unattended-upgrades.backup.$(date +%Y%m%d-%H%M%S)
+        cp /etc/apt/apt.conf.d/50unattended-upgrades "/etc/apt/apt.conf.d/50unattended-upgrades.backup.$(date +%Y%m%d-%H%M%S)"
     fi
 
     # Create the main unattended-upgrades configuration
@@ -420,7 +422,7 @@ EOF
     # Backup existing timer override if it exists
     if [[ -f /etc/systemd/system/apt-daily-upgrade.timer.d/schedule.conf ]]; then
         cp /etc/systemd/system/apt-daily-upgrade.timer.d/schedule.conf \
-           /etc/systemd/system/apt-daily-upgrade.timer.d/schedule.conf.backup.$(date +%Y%m%d-%H%M%S)
+           "/etc/systemd/system/apt-daily-upgrade.timer.d/schedule.conf.backup.$(date +%Y%m%d-%H%M%S)"
         echo -e "${YELLOW}Backed up existing timer configuration${NC}"
     fi
     
@@ -459,7 +461,7 @@ install_rhel_updates() {
     
     # Backup existing config if it exists
     if [[ -f /etc/dnf/automatic.conf ]]; then
-        cp /etc/dnf/automatic.conf /etc/dnf/automatic.conf.backup.$(date +%Y%m%d-%H%M%S)
+        cp /etc/dnf/automatic.conf "/etc/dnf/automatic.conf.backup.$(date +%Y%m%d-%H%M%S)"
     fi
 
     # Configure dnf-automatic based on user choice
@@ -506,7 +508,7 @@ EOF
     # Backup existing timer override if it exists
     if [[ -f /etc/systemd/system/dnf-automatic.timer.d/schedule.conf ]]; then
         cp /etc/systemd/system/dnf-automatic.timer.d/schedule.conf \
-           /etc/systemd/system/dnf-automatic.timer.d/schedule.conf.backup.$(date +%Y%m%d-%H%M%S)
+           "/etc/systemd/system/dnf-automatic.timer.d/schedule.conf.backup.$(date +%Y%m%d-%H%M%S)"
         echo -e "${YELLOW}Backed up existing timer configuration${NC}"
     fi
     
@@ -650,15 +652,15 @@ echo -e "${YELLOW}Creating systemd service for notifications...${NC}"
 # Build environment variables based on mode with proper escaping
 if [[ "$SECRET_MODE" == "doppler" ]]; then
     # Escape special characters for systemd
-    ESCAPED_TOKEN=$(printf '%s\n' "$DOPPLER_TOKEN" | sed 's/[\\"]/\\&/g')
-    ESCAPED_DISCORD=$(printf '%s\n' "$DOPPLER_DISCORD_SECRET" | sed 's/[\\"]/\\&/g')
-    ESCAPED_TEAMS=$(printf '%s\n' "$DOPPLER_TEAMS_SECRET" | sed 's/[\\"]/\\&/g')
-    ESCAPED_SLACK=$(printf '%s\n' "$DOPPLER_SLACK_SECRET" | sed 's/[\\"]/\\&/g')
-    ESCAPED_MATRIX=$(printf '%s\n' "$DOPPLER_MATRIX_SECRET" | sed 's/[\\"]/\\&/g')
-    ESCAPED_HOMESERVER=$(printf '%s\n' "$DOPPLER_MATRIX_HOMESERVER_SECRET" | sed 's/[\\"]/\\&/g')
-    ESCAPED_USERNAME=$(printf '%s\n' "$DOPPLER_MATRIX_USERNAME_SECRET" | sed 's/[\\"]/\\&/g')
-    ESCAPED_PASSWORD=$(printf '%s\n' "$DOPPLER_MATRIX_PASSWORD_SECRET" | sed 's/[\\"]/\\&/g')
-    ESCAPED_ROOM=$(printf '%s\n' "$DOPPLER_MATRIX_ROOM_ID_SECRET" | sed 's/[\\"]/\\&/g')
+    ESCAPED_TOKEN=$(printf '%s\n' "${DOPPLER_TOKEN:-}" | sed 's/[\\\"]/\\&/g')
+    ESCAPED_DISCORD=$(printf '%s\n' "${DOPPLER_DISCORD_SECRET:-}" | sed 's/[\\\"]/\\&/g')
+    ESCAPED_TEAMS=$(printf '%s\n' "${DOPPLER_TEAMS_SECRET:-}" | sed 's/[\\\"]/\\&/g')
+    ESCAPED_SLACK=$(printf '%s\n' "${DOPPLER_SLACK_SECRET:-}" | sed 's/[\\\"]/\\&/g')
+    ESCAPED_MATRIX=$(printf '%s\n' "${DOPPLER_MATRIX_SECRET:-}" | sed 's/[\\\"]/\\&/g')
+    ESCAPED_HOMESERVER=$(printf '%s\n' "${DOPPLER_MATRIX_HOMESERVER_SECRET:-}" | sed 's/[\\\"]/\\&/g')
+    ESCAPED_USERNAME=$(printf '%s\n' "${DOPPLER_MATRIX_USERNAME_SECRET:-}" | sed 's/[\\\"]/\\&/g')
+    ESCAPED_PASSWORD=$(printf '%s\n' "${DOPPLER_MATRIX_PASSWORD_SECRET:-}" | sed 's/[\\\"]/\\&/g')
+    ESCAPED_ROOM=$(printf '%s\n' "${DOPPLER_MATRIX_ROOM_ID_SECRET:-}" | sed 's/[\\\"]/\\&/g')
     
     SERVICE_ENV="Environment=\"DOPPLER_TOKEN=$ESCAPED_TOKEN\"
 Environment=\"DOPPLER_DISCORD_SECRET=$ESCAPED_DISCORD\"
