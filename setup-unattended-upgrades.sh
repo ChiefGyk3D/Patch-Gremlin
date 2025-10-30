@@ -61,6 +61,64 @@ fi
 
 echo "Detected OS: $OS_ID $OS_VERSION (type: $OS_TYPE)"
 
+# Check for existing installation
+EXISTING_INSTALL=false
+if [[ -f /usr/local/bin/update-notifier.sh ]] || [[ -f /etc/systemd/system/update-notifier.service ]]; then
+    EXISTING_INSTALL=true
+    echo ""
+    echo -e "${YELLOW}═══════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}    Existing Installation Detected${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo "Patch Gremlin is already installed on this system."
+    echo ""
+    
+    # Show current configuration
+    if [[ -f /etc/update-notifier/secrets.conf ]]; then
+        echo "Current mode: LOCAL file storage"
+    elif systemctl show update-notifier.service 2>/dev/null | grep -q "DOPPLER_TOKEN="; then
+        echo "Current mode: DOPPLER"
+    fi
+    
+    if systemctl is-enabled update-notifier.timer &>/dev/null; then
+        echo "Timer status: ENABLED"
+    else
+        echo "Timer status: DISABLED"
+    fi
+    
+    echo ""
+    echo "Options:"
+    echo "  1) Reinstall/Reconfigure (preserves nothing)"
+    echo "  2) Update scripts only (keeps configuration)"
+    echo "  3) Cancel installation"
+    echo ""
+    read -p "Enter choice [1-3] (default: 3): " -n 1 -r INSTALL_CHOICE
+    echo ""
+    
+    case "$INSTALL_CHOICE" in
+        1)
+            echo -e "${YELLOW}Reinstalling from scratch...${NC}"
+            echo "Note: You'll need to reconfigure all settings"
+            ;;
+        2)
+            echo -e "${GREEN}Updating scripts only...${NC}"
+            # Copy new scripts
+            cp "$SCRIPT_DIR/update-notifier.sh" /usr/local/bin/update-notifier.sh
+            chmod +x /usr/local/bin/update-notifier.sh
+            systemctl daemon-reload
+            echo -e "${GREEN}✓ Scripts updated${NC}"
+            echo ""
+            echo "Configuration preserved. To reconfigure, run option 1."
+            exit 0
+            ;;
+        3|*)
+            echo "Installation cancelled."
+            exit 0
+            ;;
+    esac
+    echo ""
+fi
+
 # Initialize variables with defaults
 UPDATE_TYPE="${UPDATE_TYPE:-}"
 UPDATE_SCHEDULE="${UPDATE_SCHEDULE:-}"
