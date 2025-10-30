@@ -80,16 +80,31 @@ SECRET_MODE="${SECRET_MODE:-doppler}"
 
 # Load configuration from file if it exists first
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "$SCRIPT_DIR/config.sh" ]]; then
-    source "$SCRIPT_DIR/config.sh"
-elif [[ -f /etc/update-notifier/config.sh ]]; then
-    source /etc/update-notifier/config.sh
+if [[ -f "$SCRIPT_DIR/config.sh" ]] && [[ -r "$SCRIPT_DIR/config.sh" ]]; then
+    # Basic validation: check file is not world-writable
+    if [[ ! -w "$SCRIPT_DIR/config.sh" ]] || [[ "$(stat -c %a "$SCRIPT_DIR/config.sh" 2>/dev/null)" != *[2367] ]]; then
+        source "$SCRIPT_DIR/config.sh"
+    else
+        log "WARNING: Skipping $SCRIPT_DIR/config.sh - file has unsafe permissions"
+    fi
+elif [[ -f /etc/update-notifier/config.sh ]] && [[ -r /etc/update-notifier/config.sh ]]; then
+    # Basic validation: check file is not world-writable
+    if [[ "$(stat -c %a /etc/update-notifier/config.sh 2>/dev/null)" != *[2367] ]]; then
+        source /etc/update-notifier/config.sh
+    else
+        log "WARNING: Skipping /etc/update-notifier/config.sh - file has unsafe permissions"
+    fi
 fi
 
 # Check if using local secrets file and override mode
-if [[ -f /etc/update-notifier/secrets.conf ]]; then
-    source /etc/update-notifier/secrets.conf
-    SECRET_MODE="local"
+if [[ -f /etc/update-notifier/secrets.conf ]] && [[ -r /etc/update-notifier/secrets.conf ]]; then
+    # Basic validation: check file is not world-writable
+    if [[ "$(stat -c %a /etc/update-notifier/secrets.conf 2>/dev/null)" != *[2367] ]]; then
+        source /etc/update-notifier/secrets.conf
+        SECRET_MODE="local"
+    else
+        log "WARNING: Skipping /etc/update-notifier/secrets.conf - file has unsafe permissions"
+    fi
 fi
 
 # Configuration - Customize these Doppler secret names to avoid conflicts
@@ -136,7 +151,7 @@ HOSTNAME=$(hostname)
 LAST_RUN=$(date '+%Y-%m-%d %H:%M:%S %Z')
 LAST_RUN_UTC=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')
 
-# Validate environment before proceeding
+# Validate environment after OS_TYPE and LOG_FILE are set
 if ! validate_environment; then
     log "ERROR: Environment validation failed"
     exit 1
@@ -161,23 +176,30 @@ else
         exit 1
     fi
     
-    # Test Doppler connectivity
-    if ! doppler me &>/dev/null; then
+    # Test Doppler connectivity with better error handling
+    DOPPLER_ERROR=$(doppler me 2>&1)
+    if [[ $? -ne 0 ]]; then
         log "ERROR: Doppler authentication failed. Run 'doppler login'"
+        log "Doppler error: $(echo "$DOPPLER_ERROR" | head -1 | sed 's/[Tt]oken/[REDACTED]/g')"
         exit 1
     fi
     
-    # Retrieve webhook URLs and Matrix credentials from Doppler
-    DISCORD_WEBHOOK=$(doppler secrets get "$DOPPLER_DISCORD_SECRET" --plain 2>/dev/null)
-    TEAMS_WEBHOOK=$(doppler secrets get "$DOPPLER_TEAMS_SECRET" --plain 2>/dev/null)
-    SLACK_WEBHOOK=$(doppler secrets get "$DOPPLER_SLACK_SECRET" --plain 2>/dev/null)
+    # Retrieve webhook URLs and Matrix credentials from Doppler with error handling
+    DISCORD_WEBHOOK=$(doppler secrets get "$DOPPLER_DISCORD_SECRET" --plain 2>/dev/null || true)
+    TEAMS_WEBHOOK=$(doppler secrets get "$DOPPLER_TEAMS_SECRET" --plain 2>/dev/null || true)
+    SLACK_WEBHOOK=$(doppler secrets get "$DOPPLER_SLACK_SECRET" --plain 2>/dev/null || true)
 
     # Matrix can use either webhooks OR homeserver + username + password + room ID
-    MATRIX_WEBHOOK=$(doppler secrets get "$DOPPLER_MATRIX_SECRET" --plain 2>/dev/null)
-    MATRIX_HOMESERVER=$(doppler secrets get "$DOPPLER_MATRIX_HOMESERVER_SECRET" --plain 2>/dev/null)
-    MATRIX_USERNAME=$(doppler secrets get "$DOPPLER_MATRIX_USERNAME_SECRET" --plain 2>/dev/null)
-    MATRIX_PASSWORD=$(doppler secrets get "$DOPPLER_MATRIX_PASSWORD_SECRET" --plain 2>/dev/null)
-    MATRIX_ROOM_ID=$(doppler secrets get "$DOPPLER_MATRIX_ROOM_ID_SECRET" --plain 2>/dev/null)
+    MATRIX_WEBHOOK=$(doppler secrets get "$DOPPLER_MATRIX_SECRET" --plain 2>/dev/null || true)
+    MATRIX_HOMESERVER=$(doppler secrets get "$DOPPLER_MATRIX_HOMESERVER_SECRET" --plain 2>/dev/null || true)
+    MATRIX_USERNAME=$(doppler secrets get "$DOPPLER_MATRIX_USERNAME_SECRET" --plain 2>/dev/null || true)
+    MATRIX_PASSWORD=$(doppler secrets get "$DOPPLER_MATRIX_PASSWORD_SECRET" --plain 2>/dev/null || true)
+    MATRIX_ROOM_ID=$(doppler secrets get "$DOPPLER_MATRIX_ROOM_ID_SECRET" --plain 2>/dev/null || true)
+    
+    # Log if no secrets were retrieved (without exposing values)
+    if [[ -z "$DISCORD_WEBHOOK" && -z "$TEAMS_WEBHOOK" && -z "$SLACK_WEBHOOK" && -z "$MATRIX_WEBHOOK" && -z "$MATRIX_HOMESERVER" ]]; then
+        log "WARNING: No notification secrets found in Doppler. Check secret names and permissions."
+    fi
 fi
 
 # Determine Matrix configuration method
@@ -308,8 +330,8 @@ else
     
     # Prepare log output for notifications (last 15 lines, safely escaped)
     LOG_OUTPUT=$(tail -n 15 "$TEMP_LOG" | python3 -c "import sys, json; print(json.dumps(sys.stdin.read())[1:-1])" 2>/dev/null || {
-        # Robust fallback escaping for JSON
-        tail -n 15 "$TEMP_LOG" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed "s/'/\\'/g" | sed 's/\t/\\t/g' | sed 's/\r/\\r/g' | tr '\n' ' ' | sed 's/  */ /g' | sed 's/[[:cntrl:]]//g'
+        # Simple fallback escaping for JSON
+        tail -n 15 "$TEMP_LOG" | awk '{gsub(/\\/,"\\\\",$0); gsub(/"/,"\\\"",$0); gsub(/\t/,"\\t",$0); printf "%s ", $0}' | sed 's/[[:cntrl:]]//g'
     })
     
     log "INFO: Detected OS: $OS_TYPE, Status: $UPDATE_STATUS, Summary: $UPDATE_SUMMARY"
@@ -517,19 +539,20 @@ if [[ "$MATRIX_CONFIGURED" == true ]]; then
             MATRIX_USER_LOCALPART="$MATRIX_USERNAME"
         fi
         
-        # Step 1: Login to get access token
-        LOGIN_PAYLOAD=$(cat <<EOF
+        # Step 1: Login to get access token using temp file to avoid credential exposure
+        LOGIN_TEMP=$(mktemp)
+        trap "rm -f $LOGIN_TEMP" EXIT
+        cat > "$LOGIN_TEMP" <<EOF
 {
   "type": "m.login.password",
   "user": "$MATRIX_USER_LOCALPART",
   "password": "$MATRIX_PASSWORD"
 }
 EOF
-        )
         
         LOGIN_RESPONSE=$(curl -s -X POST \
             -H "Content-Type: application/json" \
-            -d "$LOGIN_PAYLOAD" \
+            -d @"$LOGIN_TEMP" \
             "${MATRIX_HOMESERVER}/_matrix/client/r0/login")
         
         # Extract access token from login response
@@ -569,12 +592,16 @@ MSGEOF
             # Matrix API endpoint
             MATRIX_URL="${MATRIX_HOMESERVER}/_matrix/client/r0/rooms/${ENCODED_ROOM_ID}/send/m.room.message/${TXN_ID}"
             
-            # Send notification to Matrix using API
+            # Send notification to Matrix using API with temp file
+            MATRIX_TEMP=$(mktemp)
+            trap "rm -f $MATRIX_TEMP" EXIT
+            echo "$MATRIX_PAYLOAD" > "$MATRIX_TEMP"
+            
             RESPONSE=$(curl -s -w "\n%{http_code}" \
                 -H "Content-Type: application/json" \
                 -H "Authorization: Bearer $ACCESS_TOKEN" \
                 -X PUT \
-                -d "$MATRIX_PAYLOAD" \
+                -d @"$MATRIX_TEMP" \
                 "$MATRIX_URL")
             
             HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
