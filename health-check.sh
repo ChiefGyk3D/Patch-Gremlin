@@ -55,10 +55,11 @@ check_service "update-notifier.timer"
 if [[ -f /etc/update-notifier/config.sh ]]; then
     log "✓ Config file exists"
     if command -v doppler &>/dev/null; then
-        if doppler me &>/dev/null; then
+        DOPPLER_ERROR=$(doppler me 2>&1)
+        if [[ $? -eq 0 ]]; then
             log "✓ Doppler authenticated"
         else
-            log "✗ Doppler authentication failed"
+            log "✗ Doppler authentication failed: $(echo "$DOPPLER_ERROR" | head -1 | sed 's/[Tt]oken/[REDACTED]/g')"
             ((ERRORS++))
         fi
     else
@@ -69,10 +70,11 @@ fi
 
 # Test notification (dry run)
 log "Testing notification script..."
-if PATCH_GREMLIN_DRY_RUN=true /usr/local/bin/update-notifier.sh &>/dev/null; then
+TEST_OUTPUT=$(PATCH_GREMLIN_DRY_RUN=true /usr/local/bin/update-notifier.sh 2>&1)
+if [[ $? -eq 0 ]]; then
     log "✓ Notification script test passed"
 else
-    log "✗ Notification script test failed"
+    log "✗ Notification script test failed: $(echo "$TEST_OUTPUT" | head -1)"
     ((ERRORS++))
 fi
 
