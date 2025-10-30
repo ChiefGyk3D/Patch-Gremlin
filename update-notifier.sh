@@ -333,18 +333,41 @@ else
         fi
     fi
     
-    # Prepare log output for notifications - filter out DEBUG noise and keep only INFO/WARNING/ERROR
-    FILTERED_LOG=$(tail -n 30 "$TEMP_LOG" | grep -E '(INFO|WARNING|ERROR|CRITICAL)' | grep -v 'adjusting candidate' | grep -v 'pkgs that look like' | grep -v 'fetch.run' | grep -v 'Packages blacklist' | grep -v 'upgrade result' | tail -n 10)
+    # Create human-readable summary from logs
+    HUMAN_SUMMARY=""
     
-    # If no meaningful logs, show a simple summary
-    if [[ -z "$FILTERED_LOG" ]]; then
-        FILTERED_LOG="Update check completed successfully with no actionable items."
+    # Check for updates available/applied
+    if grep -q "packages upgraded" "$TEMP_LOG" 2>/dev/null; then
+        PACKAGE_COUNT=$(grep "packages upgraded" "$TEMP_LOG" | tail -n 1 | awk '{print $1}')
+        HUMAN_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded"
+    elif grep -q "No packages found that can be upgraded" "$TEMP_LOG" 2>/dev/null; then
+        HUMAN_SUMMARY="✅ System Status: No updates available"
+    fi
+    
+    # Check for held back packages
+    if grep -q "kept back" "$TEMP_LOG" 2>/dev/null; then
+        HELD_PACKAGES=$(grep "kept back" "$TEMP_LOG" | tail -n 1 | sed 's/.*kept back: //' | sed 's/,/, /g')
+        HUMAN_SUMMARY="${HUMAN_SUMMARY}\n⚠️  Packages Held Back: ${HELD_PACKAGES}"
+    elif grep -q "packages kept back" "$TEMP_LOG" 2>/dev/null; then
+        HELD_COUNT=$(grep "packages kept back" "$TEMP_LOG" | tail -n 1 | awk '{print $1}')
+        HUMAN_SUMMARY="${HUMAN_SUMMARY}\n⚠️  Packages Held Back: ${HELD_COUNT} packages require manual review"
+    fi
+    
+    # Check for errors
+    if grep -qE "(ERROR|CRITICAL)" "$TEMP_LOG" 2>/dev/null; then
+        ERROR_MSG=$(grep -E "(ERROR|CRITICAL)" "$TEMP_LOG" | tail -n 1 | sed 's/^[0-9: -]*[A-Z]* //')
+        HUMAN_SUMMARY="${HUMAN_SUMMARY}\n❌ Error: ${ERROR_MSG}"
+    fi
+    
+    # Default if nothing was found
+    if [[ -z "$HUMAN_SUMMARY" ]]; then
+        HUMAN_SUMMARY="✅ Update check completed successfully"
     fi
     
     # Prepare for JSON (safely escaped)
-    LOG_OUTPUT=$(echo "$FILTERED_LOG" | python3 -c "import sys, json; print(json.dumps(sys.stdin.read())[1:-1])" 2>/dev/null || {
+    LOG_OUTPUT=$(echo -e "$HUMAN_SUMMARY" | python3 -c "import sys, json; print(json.dumps(sys.stdin.read())[1:-1])" 2>/dev/null || {
         # Simple fallback escaping for JSON
-        echo "$FILTERED_LOG" | awk '{gsub(/\\/,"\\\\",$0); gsub(/"/,"\\\"",$0); gsub(/\t/,"\\t",$0); printf "%s ", $0}' | sed 's/[[:cntrl:]]//g'
+        echo -e "$HUMAN_SUMMARY" | awk '{gsub(/\\/,"\\\\",$0); gsub(/"/,"\\\"",$0); gsub(/\t/,"\\t",$0); printf "%s ", $0}' | sed 's/[[:cntrl:]]//g'
     })
     
     log "INFO: Detected OS: $OS_TYPE, Status: $UPDATE_STATUS, Summary: $UPDATE_SUMMARY"
@@ -518,7 +541,7 @@ if [[ -n "$SLACK_WEBHOOK" ]]; then
       "type": "section",
       "text": {
         "type": "mrkdwn",
-        "text": "*Recent Log:*\\n\`\`\`$LOG_OUTPUT\`\`\`"
+        "text": "*Status:*\\n$LOG_OUTPUT"
       }
     }
   ]
@@ -538,8 +561,38 @@ fi
 if [[ "$MATRIX_CONFIGURED" == true ]]; then
     log "INFO: Sending notification to Matrix..."
     
-    # Format log output for Matrix (plain text with newlines) - filter for readability
-    MATRIX_LOG=$(tail -n 30 "$TEMP_LOG" 2>/dev/null | grep -E '(INFO|WARNING|ERROR|CRITICAL)' | grep -v 'adjusting candidate' | grep -v 'pkgs that look like' | grep -v 'fetch.run' | grep -v 'Packages blacklist' | grep -v 'upgrade result' | tail -n 10 || echo "Update check completed successfully with no actionable items.")
+    # Create human-readable summary for Matrix (reuse the same logic)
+    MATRIX_SUMMARY=""
+    
+    # Check for updates available/applied
+    if grep -q "packages upgraded" "$TEMP_LOG" 2>/dev/null; then
+        PACKAGE_COUNT=$(grep "packages upgraded" "$TEMP_LOG" | tail -n 1 | awk '{print $1}')
+        MATRIX_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded"
+    elif grep -q "No packages found that can be upgraded" "$TEMP_LOG" 2>/dev/null; then
+        MATRIX_SUMMARY="✅ System Status: No updates available"
+    fi
+    
+    # Check for held back packages
+    if grep -q "kept back" "$TEMP_LOG" 2>/dev/null; then
+        HELD_PACKAGES=$(grep "kept back" "$TEMP_LOG" | tail -n 1 | sed 's/.*kept back: //' | sed 's/,/, /g')
+        MATRIX_SUMMARY="${MATRIX_SUMMARY}\n⚠️  Packages Held Back: ${HELD_PACKAGES}"
+    elif grep -q "packages kept back" "$TEMP_LOG" 2>/dev/null; then
+        HELD_COUNT=$(grep "packages kept back" "$TEMP_LOG" | tail -n 1 | awk '{print $1}')
+        MATRIX_SUMMARY="${MATRIX_SUMMARY}\n⚠️  Packages Held Back: ${HELD_COUNT} packages require manual review"
+    fi
+    
+    # Check for errors
+    if grep -qE "(ERROR|CRITICAL)" "$TEMP_LOG" 2>/dev/null; then
+        ERROR_MSG=$(grep -E "(ERROR|CRITICAL)" "$TEMP_LOG" | tail -n 1 | sed 's/^[0-9: -]*[A-Z]* //')
+        MATRIX_SUMMARY="${MATRIX_SUMMARY}\n❌ Error: ${ERROR_MSG}"
+    fi
+    
+    # Default if nothing was found
+    if [[ -z "$MATRIX_SUMMARY" ]]; then
+        MATRIX_SUMMARY="✅ Update check completed successfully"
+    fi
+    
+    MATRIX_LOG=$(echo -e "$MATRIX_SUMMARY")
     
     if [[ "$MATRIX_USE_API" == true ]]; then
         # Use Matrix Client-Server API with username/password login
@@ -586,7 +639,7 @@ $NOTIFICATION_TITLE
 
 $UPDATE_SUMMARY at $LAST_RUN
 
-Recent log:
+Status:
 $MATRIX_LOG
 MSGEOF
 )
@@ -637,7 +690,7 @@ MSGEOF
         
         MATRIX_PAYLOAD=$(cat <<EOF
 {
-  "text": "$NOTIFICATION_TITLE\n\n$UPDATE_SUMMARY at $LAST_RUN\n\nRecent log:\n$MATRIX_LOG",
+  "text": "$NOTIFICATION_TITLE\n\n$UPDATE_SUMMARY at $LAST_RUN\n\nStatus:\n$MATRIX_LOG",
   "format": "plain",
   "displayName": "Linux Updates"
 }
