@@ -64,7 +64,19 @@ done
 if [[ "$test1_pass" == "true" ]]; then
     echo -e "${GREEN}Test 1: PASSED${NC}"
 else
-    echo -e "${RED}Test 1: FAILED - Run setup script first${NC}"
+    echo -e "${RED}Test 1: FAILED${NC}"
+    echo ""
+    echo -e "${YELLOW}Patch Gremlin is not installed on this system.${NC}"
+    echo ""
+    echo "This test must be run on the system where Patch Gremlin is installed."
+    echo ""
+    echo "To install Patch Gremlin on this system:"
+    echo "  sudo ./setup-unattended-upgrades.sh"
+    echo ""
+    echo "To test a remote system (e.g., Raspberry Pi):"
+    echo "  ssh pi@your-pi-hostname"
+    echo "  cd /path/to/Patch-Gremlin"
+    echo "  sudo ./test-deployment.sh"
     exit 1
 fi
 echo ""
