@@ -161,7 +161,7 @@ else
     if [[ -n "$SYSTEMD_ENV" ]]; then
         echo "   Debug: Found systemd Environment but no DOPPLER_TOKEN:"
         # Redact any Doppler tokens before displaying
-        echo "   $SYSTEMD_ENV" | sed -E 's/(DOPPLER_TOKEN=dp\.st\.[^.]+\.).*/\1***REDACTED***/g' | head -c 200
+        echo "   $SYSTEMD_ENV" | sed -E "s/DOPPLER_TOKEN=dp\.st\.[^ ]*/DOPPLER_TOKEN=***REDACTED***/g" | head -c 200
         echo "..."
     else
         echo "   Debug: No systemd Environment found (service may not exist)"
@@ -322,7 +322,7 @@ if [[ "$OS_TYPE" == "debian" ]]; then
         
         # Show hook content (redact sensitive tokens)
         echo "Hook configuration:"
-        cat "$HOOK_FILE" | sed -E 's/(DOPPLER_TOKEN=dp\.st\.[^.]+\.).*/\1***REDACTED***/g'
+        cat "$HOOK_FILE" | sed -E "s/(DOPPLER_TOKEN=')dp\.st\.[^']+/\1***REDACTED***/g"
         echo ""
         
         # Test hook execution (this is safe, just runs the notifier)
@@ -345,7 +345,7 @@ elif [[ "$OS_TYPE" == "rhel" ]]; then
     if [[ -f "$HOOK_FILE" ]]; then
         echo -e "${GREEN}✓${NC} DNF hook is configured"
         echo "Hook configuration:"
-        cat "$HOOK_FILE" | sed -E 's/(DOPPLER_TOKEN=dp\.st\.[^.]+\.).*/\1***REDACTED***/g'
+        cat "$HOOK_FILE" | sed -E "s/(DOPPLER_TOKEN=')dp\.st\.[^']+/\1***REDACTED***/g"
     else
         echo -e "${RED}✗${NC} DNF hook not found"
     fi
