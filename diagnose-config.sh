@@ -116,15 +116,34 @@ fi
 echo ""
 echo -e "${YELLOW}5. Testing Notification (dry run):${NC}"
 if [[ $EUID -eq 0 ]]; then
-    echo "   Running: /usr/local/bin/update-notifier.sh 2>&1 | head -30"
+    # Test using systemd service to ensure proper environment
+    echo "   Running: systemctl start update-notifier.service (with PATCH_GREMLIN_DRY_RUN=true)"
     echo "   ---"
-    PATCH_GREMLIN_DRY_RUN=true /usr/local/bin/update-notifier.sh 2>&1 | head -30 | sed 's/^/   /'
-    exitcode=${PIPESTATUS[0]}
+    
+    # Create temporary service override for dry-run
+    mkdir -p /etc/systemd/system/update-notifier.service.d/
+    cat > /etc/systemd/system/update-notifier.service.d/diagnose-dryrun.conf << 'EOF'
+[Service]
+Environment="PATCH_GREMLIN_DRY_RUN=true"
+EOF
+    systemctl daemon-reload
+    
+    # Run the service and capture output
+    systemctl start update-notifier.service 2>&1
+    exitcode=$?
+    
+    # Show recent logs from the run
+    journalctl -u update-notifier.service -n 20 --no-pager --since "30 seconds ago" | grep -v "^--" | sed 's/^/   /'
+    
+    # Clean up override
+    rm -f /etc/systemd/system/update-notifier.service.d/diagnose-dryrun.conf
+    systemctl daemon-reload
+    
     echo "   ---"
     if [[ $exitcode -eq 0 ]]; then
-        echo -e "   ${GREEN}✓${NC} Script completed successfully"
+        echo -e "   ${GREEN}✓${NC} Service completed successfully"
     else
-        echo -e "   ${RED}✗${NC} Script exited with code: $exitcode"
+        echo -e "   ${YELLOW}⚠${NC} Service exited with code: $exitcode (check logs above)"
     fi
 else
     echo "   Skipped (run as root to test)"
@@ -137,14 +156,14 @@ echo -e "${BLUE}═════════════════════�
 echo ""
 echo "Common Issues:"
 echo ""
-echo "1. ${YELLOW}If using LOCAL mode but secrets file is empty:${NC}"
+echo -e "1. ${YELLOW}If using LOCAL mode but secrets file is empty:${NC}"
 echo "   → Edit: sudo nano /etc/update-notifier/secrets.conf"
 echo "   → Add your webhook URLs"
 echo ""
-echo "2. ${YELLOW}If using DOPPLER mode but CLI not installed:${NC}"
+echo -e "2. ${YELLOW}If using DOPPLER mode but CLI not installed:${NC}"
 echo "   → Install Doppler: curl -sLf https://cli.doppler.com/install.sh | sh"
 echo "   → Configure: doppler login && doppler setup"
 echo ""
-echo "3. ${YELLOW}If service not configured:${NC}"
+echo -e "3. ${YELLOW}If service not configured:${NC}"
 echo "   → Re-run setup: sudo -E bash setup-unattended-upgrades.sh"
 echo ""
