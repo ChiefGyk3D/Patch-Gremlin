@@ -3,369 +3,509 @@
   <img src="media/patch_gremlin_banner.png" alt="Patch Gremlin Banner" width="400"/>
 </div>
 
-
 Automated system update notifications for Debian and RHEL-based systems with Discord, Microsoft Teams, Slack, and Matrix support. Integrates with `unattended-upgrades` (Debian/Ubuntu) or `dnf-automatic` (RHEL/Fedora/Amazon Linux) to send notifications when security updates are installed.
 
 ## Features
 
 - 🔔 **Multi-Platform**: Send notifications to Discord, Microsoft Teams, Slack, and/or Matrix (any combination!)
-- 🔒 **Secure**: Uses Doppler CLI for credential management
-- 🎨 **Configurable**: Customize Doppler secret names to avoid conflicts
+- 🔒 **Flexible Secrets**: Use Doppler for centralized management OR local file storage
+- 🎨 **Configurable**: Customize secret names and update schedules
 - ⚙️ **Automated**: Integrates with unattended-upgrades and systemd
 - 🧠 **Intelligent**: Analyzes logs to distinguish between "5 packages updated" vs "no updates available"
 - 📊 **Informative**: Rich notifications with hostname, timezone-aware timestamps, and logs
 - 🌍 **Timezone-Aware**: Detects and configures system timezone during setup
 - 🔐 **Simple Auth**: Matrix uses username/password (no token generation needed)
 - 🖥️ **Multi-OS**: Supports Debian/Ubuntu and RHEL/Rocky/AlmaLinux/Amazon Linux/Fedora
+- 🔇 **Clean Logs**: Configurable verbosity (quiet by default)
 
 ## Quick Start
 
-### 1. Install Dependencies
+### Installation Methods
+
+Choose your preferred method for storing notification secrets:
+
+#### Option 1: Local File Storage (Simpler)
+
+Secrets stored in `/etc/update-notifier/secrets.conf` - no external dependencies.
 
 ```bash
-# Install Doppler CLI
+# 1. Clone and enter directory
+git clone https://github.com/ChiefGyk3D/Patch-Gremlin.git
+cd Patch-Gremlin
+
+# 2. Run setup (it will prompt for secret storage choice)
+sudo ./setup-unattended-upgrades.sh
+
+# 3. Follow prompts:
+#    - Choose update type (security only / all updates)
+#    - Choose schedule (daily / weekly)
+#    - Choose timezone
+#    - Choose verbose logging (default: quiet)
+#    - Choose LOCAL file storage
+#    - Enter webhook URLs for your platforms
+
+# Done! Test the notification:
+sudo /usr/local/bin/update-notifier.sh
+```
+
+#### Option 2: Doppler (Centralized Secret Management)
+
+Best for managing multiple servers or sharing secrets across teams.
+
+```bash
+# 1. Install Doppler CLI
 curl -sLf https://cli.doppler.com/install.sh | sh
 
-# Authenticate (both user and root need separate authentication)
+# 2. Authenticate (both user and root)
 doppler login
 sudo doppler login
-```
 
-### 2. Configure Doppler
-
-```bash
-# Setup Doppler project
+# 3. Setup Doppler project
 sudo doppler setup --project your-project --config your-config
 
-# Add secrets for your chosen platform(s) - use any combination!
+# 4. Add secrets (choose platforms you want)
+doppler secrets set UPDATE_NOTIFIER_DISCORD_WEBHOOK="https://discord.com/api/webhooks/..."
+doppler secrets set UPDATE_NOTIFIER_MATRIX_HOMESERVER="https://matrix.org"
+doppler secrets set UPDATE_NOTIFIER_MATRIX_USERNAME="username"
+doppler secrets set UPDATE_NOTIFIER_MATRIX_PASSWORD="your-password"
+doppler secrets set UPDATE_NOTIFIER_MATRIX_ROOM_ID="!room:matrix.org"
 
-# Discord (webhook URL from Discord server settings)
-doppler secrets set SYSTEM_UPDATE_DISCORD="https://discord.com/api/webhooks/..."
+# 5. Clone and run setup
+git clone https://github.com/ChiefGyk3D/Patch-Gremlin.git
+cd Patch-Gremlin
+sudo ./setup-unattended-upgrades.sh
 
-# Microsoft Teams (webhook URL from Teams channel connectors)
-doppler secrets set SYSTEM_UPDATE_TEAMS="https://outlook.office.com/webhook/..."
+# 6. Follow prompts and choose DOPPLER mode
+#    You'll need to provide your Doppler service token when prompted
 
-# Slack (webhook URL from Slack app)
-doppler secrets set SYSTEM_UPDATE_SLACK="https://hooks.slack.com/services/..."
-
-# Matrix (username/password - simpler than access tokens)
-doppler secrets set MATRIX_HOMESERVER="https://matrix.org"
-doppler secrets set MATRIX_USERNAME="youruser"  # Just username, not @user:server
-doppler secrets set MATRIX_PASSWORD="your-password"
-doppler secrets set SYSTEM_UPDATE_MATRIX_ROOM="!roomid:matrix.org"
+# Done! Test the notification:
+sudo /usr/local/bin/update-notifier.sh
 ```
 
-### 3. Configure Secret Names
+### Creating a Doppler Service Token
+
+When using Doppler mode, the setup will prompt for a service token:
 
 ```bash
-# Copy example config and customize
+# Create a service token (no expiration)
+doppler configs tokens create patch-gremlin-token --max-age 0
+
+# Copy the token (starts with dp.st.) and paste when prompted
+```
+
+The service token allows the notification script to access your secrets without requiring doppler login on the system.
+
+## Configuration
+
+### Interactive Setup
+
+The setup script (`setup-unattended-upgrades.sh`) will interactively ask you about:
+
+1. **Update Type**
+   - Security updates only (recommended)
+   - All available updates
+
+2. **Update Schedule**
+   - Daily (recommended for security)
+   - Weekly (choose day of week)
+   - Custom time (default: 02:00)
+
+3. **Timezone**
+   - Keep current or select from common timezones
+
+4. **Verbose Logging**
+   - Quiet (recommended) - only important messages
+   - Verbose - detailed DEBUG output
+
+5. **Secret Storage**
+   - LOCAL file - simpler, secrets in `/etc/update-notifier/secrets.conf`
+   - DOPPLER - centralized, requires Doppler CLI and service token
+
+6. **Notification Platforms**
+   - Discord webhook URL
+   - Microsoft Teams webhook URL
+   - Slack webhook URL
+   - Matrix (webhook OR homeserver + username/password)
+   - **At least one required**
+
+### Environment Variable Presets
+
+Skip interactive prompts by setting environment variables before running setup:
+
+```bash
+export UPDATE_TYPE="security"              # or "all"
+export UPDATE_SCHEDULE="daily"             # or "weekly"
+export UPDATE_DAY="Sat"                    # if weekly: Sun, Mon, Tue, Wed, Thu, Fri, Sat
+export UPDATE_TIME="02:00"                 # 24-hour format
+export SYSTEM_TIMEZONE="US/Eastern"        # or leave unset for current
+export VERBOSE_LOGGING="false"             # or "true" for debug
+export SECRET_MODE="local"                 # or "doppler"
+export DOPPLER_TOKEN="dp.st.xxx"           # if using Doppler mode
+
+# Run setup with presets
+sudo -E ./setup-unattended-upgrades.sh
+```
+
+### Customizing Doppler Secret Names
+
+If you need different secret names (to avoid conflicts with other programs), create `config.sh`:
+
+```bash
 cp config.example.sh config.sh
 nano config.sh
 ```
 
 Edit to match your Doppler secret names:
 ```bash
-# Configure one or more platforms (any combination works!)
-export DOPPLER_DISCORD_SECRET="SYSTEM_UPDATE_DISCORD"
-export DOPPLER_TEAMS_SECRET="SYSTEM_UPDATE_TEAMS"
-export DOPPLER_SLACK_SECRET="SYSTEM_UPDATE_SLACK"
-export DOPPLER_MATRIX_HOMESERVER_SECRET="MATRIX_HOMESERVER"
-export DOPPLER_MATRIX_USERNAME_SECRET="MATRIX_USERNAME"
-export DOPPLER_MATRIX_PASSWORD_SECRET="MATRIX_PASSWORD"
-export DOPPLER_MATRIX_ROOM_ID_SECRET="SYSTEM_UPDATE_MATRIX_ROOM"
+# Customize these to match YOUR Doppler secret names
+export DOPPLER_DISCORD_SECRET="MY_DISCORD_WEBHOOK"
+export DOPPLER_TEAMS_SECRET="MY_TEAMS_WEBHOOK"
+export DOPPLER_SLACK_SECRET="MY_SLACK_WEBHOOK"
+export DOPPLER_MATRIX_HOMESERVER_SECRET="MY_MATRIX_SERVER"
+export DOPPLER_MATRIX_USERNAME_SECRET="MY_MATRIX_USER"
+export DOPPLER_MATRIX_PASSWORD_SECRET="MY_MATRIX_PASS"
+export DOPPLER_MATRIX_ROOM_ID_SECRET="MY_MATRIX_ROOM"
 ```
 
-### 4. Install
-
+Then run setup with your config:
 ```bash
-# Source your config to set environment variables
 source config.sh
-
-# Run setup (with -E to preserve environment variables)
 sudo -E ./setup-unattended-upgrades.sh
 ```
 
-**Note**: The `source config.sh` step is only needed during setup. The setup script will permanently embed your custom secret names into the systemd service, so they'll persist across reboots without needing to source the config file again.
+### Local Secrets File Format
 
-The setup script will:
-- Install and configure unattended-upgrades (Debian) or dnf-automatic (RHEL)
-- Configure timezone (detects current, offers common options)
-- Embed your custom Doppler secret names into the systemd service
-- Install notification script to `/usr/local/bin/`
-- Create systemd service and timer with your specified schedule
-- Setup post-upgrade hooks (APT or DNF)
-
-### 5. Test
+If using local file storage, secrets are stored in `/etc/update-notifier/secrets.conf`:
 
 ```bash
-# Source config for testing (if using custom secret names)
-source config.sh
+SECRET_MODE="local"
 
-# Verify installation
-sudo -E ./test-setup.sh
+# Discord
+DISCORD_WEBHOOK="https://discord.com/api/webhooks/..."
 
-# Test notification manually
+# Microsoft Teams
+TEAMS_WEBHOOK="https://outlook.office.com/webhook/..."
+
+# Slack
+SLACK_WEBHOOK="https://hooks.slack.com/services/..."
+
+# Matrix - Webhook (if available)
+MATRIX_WEBHOOK="https://matrix.example.org/_matrix/webhook/..."
+
+# Matrix - API (recommended)
+MATRIX_HOMESERVER="https://matrix.org"
+MATRIX_USERNAME="username"
+MATRIX_PASSWORD="your-password"
+MATRIX_ROOM_ID="!room:matrix.org"
+```
+
+**Security**: This file is automatically created with `chmod 600` (owner read/write only).
+
+## Getting Webhook URLs
+
+### Discord
+1. Go to Server Settings → Integrations → Webhooks
+2. Click "New Webhook" or edit existing
+3. Copy webhook URL
+4. Format: `https://discord.com/api/webhooks/{id}/{token}`
+
+### Microsoft Teams
+1. Go to channel → More options (⋯) → Connectors
+2. Search for "Incoming Webhook" → Configure
+3. Give it a name, optionally upload image
+4. Copy webhook URL
+5. Format: `https://outlook.office.com/webhook/...`
+
+### Slack
+1. Go to https://api.slack.com/apps
+2. Create New App → From scratch
+3. Add "Incoming Webhooks" feature
+4. Activate and add to workspace
+5. Copy webhook URL
+6. Format: `https://hooks.slack.com/services/...`
+
+### Matrix
+
+**Getting Your Room ID:**
+
+*Element Web/Desktop:*
+1. Open the room → Click room name → Settings → Advanced
+2. Copy "Internal room ID" (starts with `!`)
+
+*Element Mobile:*
+1. Open room → Tap room name → About
+2. Room ID is at the bottom
+
+**Username Format:**
+- ✅ Correct: `username` (just the localpart)
+- ❌ Wrong: `@username:matrix.org` (full format)
+
+The script will automatically extract the localpart if needed.
+
+## Testing & Diagnostics
+
+### Quick Commands
+
+```bash
+# Test notification (dry run - no actual sending)
+sudo PATCH_GREMLIN_DRY_RUN=true /usr/local/bin/update-notifier.sh
+
+# Send real test notification
 sudo /usr/local/bin/update-notifier.sh
 
-# Test without sending (dry run)
-sudo PATCH_GREMLIN_DRY_RUN=true /usr/local/bin/update-notifier.sh
-```
+# Run comprehensive diagnostics
+sudo ./diagnose-config.sh
 
-## How It Works
-
-1. **unattended-upgrades** automatically installs security updates
-2. **APT hook** triggers notification script after upgrades complete
-3. **systemd timer** provides backup daily notifications
-4. **Notification script**:
-   - Loads config from `/etc/update-notifier/config.sh`
-   - Retrieves credentials from Doppler using custom secret names
-   - Sends formatted notifications to configured platforms
-
-## Files Installed
-
-**All Systems:**
-```
-/usr/local/bin/update-notifier.sh          # Main notification script
-/etc/update-notifier/config.sh             # Custom secret name configuration
-/etc/systemd/system/update-notifier.service # Systemd service
-/etc/systemd/system/update-notifier.timer   # Daily timer
-```
-
-**Debian/Ubuntu:**
-```
-/etc/apt/apt.conf.d/99patch-gremlin-notification  # APT hook
-/etc/apt/apt.conf.d/50unattended-upgrades         # Security update config
-/etc/apt/apt.conf.d/20auto-upgrades               # Auto-upgrade schedule
-```
-
-**RHEL/Fedora/Amazon Linux:**
-```
-/etc/dnf/automatic.conf                                    # DNF automatic config
-/usr/local/bin/patch-gremlin-dnf-hook.sh                  # Post-transaction hook
-/etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf  # Service override
-```
-
-## Configuration
-
-### Notification Types
-
-Patch Gremlin provides intelligent notifications based on what actually happened:
-
-- **🟢 Updates Applied**: "System Updates Applied on [hostname]" - when packages were actually installed
-- **🔵 No Updates**: "System Update Check Complete on [hostname]" - when no updates were available
-- **🟡 Unknown Status**: "System Update Process Complete on [hostname]" - when status is unclear
-
-All notifications include:
-- Timezone-aware timestamps (e.g., "2024-01-15 14:30:25 EST")
-- Package count when available (e.g., "5 package(s) updated")
-- Recent log entries for troubleshooting
-
-### Timezone Configuration
-
-During setup, the script will:
-1. Detect your current timezone
-2. Ask if you want to change it
-3. Offer common timezone options:
-   - US timezones (Eastern, Central, Mountain, Pacific)
-   - European timezones (London, Paris)
-   - Asia/Tokyo, UTC
-   - Manual entry option
-
-To preset timezone: `export SYSTEM_TIMEZONE=skip` before running setup.
-
-### Doppler Secret Names
-
-The script supports custom Doppler secret names via `config.sh`. This allows you to:
-- Avoid conflicts with other applications
-- Use consistent naming across your infrastructure
-- Namespace secrets by hostname or environment
-
-**Default names** (if no config.sh):
-- `UPDATE_NOTIFIER_DISCORD_WEBHOOK`
-- `UPDATE_NOTIFIER_TEAMS_WEBHOOK`
-- `UPDATE_NOTIFIER_SLACK_WEBHOOK`
-- `UPDATE_NOTIFIER_MATRIX_HOMESERVER`
-- `UPDATE_NOTIFIER_MATRIX_USERNAME`
-- `UPDATE_NOTIFIER_MATRIX_PASSWORD`
-- `UPDATE_NOTIFIER_MATRIX_ROOM_ID`
-
-**Custom names** (via config.sh):
-```bash
-export DOPPLER_DISCORD_SECRET="SYSTEM_UPDATE_DISCORD"
-export DOPPLER_TEAMS_SECRET="SYSTEM_UPDATE_TEAMS"
-export DOPPLER_SLACK_SECRET="SYSTEM_UPDATE_SLACK"
-export DOPPLER_MATRIX_HOMESERVER_SECRET="MATRIX_HOMESERVER"
-# ... etc
-```
-
-### Messaging Platform Setup
-
-**Discord:**
-1. Go to Server Settings → Integrations → Webhooks
-2. Create webhook, copy URL
-3. Add to Doppler: `doppler secrets set SYSTEM_UPDATE_DISCORD="<webhook-url>"`
-
-**Microsoft Teams:**
-1. Go to channel → Connectors → Incoming Webhook
-2. Configure webhook, copy URL
-3. Add to Doppler: `doppler secrets set SYSTEM_UPDATE_TEAMS="<webhook-url>"`
-
-**Slack:**
-1. Create Slack app with Incoming Webhook
-2. Install to workspace, copy webhook URL
-3. Add to Doppler: `doppler secrets set SYSTEM_UPDATE_SLACK="<webhook-url>"`
-
-**Matrix:**
-See [MATRIX_SETUP.md](MATRIX_SETUP.md) for detailed instructions.
-
-### Matrix Username Format
-
-In Doppler, store just the **localpart** of your Matrix username (without `@` or `:homeserver`):
-- ✅ Correct: `username`
-- ❌ Wrong: `@username:matrix.org`
-
-The script will automatically extract the localpart if you accidentally include the full format.
-
-### Environment Variables
-
-Customize script behavior with environment variables:
-
-```bash
-# Testing and debugging
-PATCH_GREMLIN_DRY_RUN=true          # Test without sending notifications
-
-# Performance tuning
-PATCH_GREMLIN_MAX_LOG_LINES=100     # Log lines to include (default: 50)
-PATCH_GREMLIN_RETRY_COUNT=5         # HTTP retry attempts (default: 3)
-PATCH_GREMLIN_RETRY_DELAY=5         # Seconds between retries (default: 2)
-PATCH_GREMLIN_CURL_TIMEOUT=60       # HTTP timeout seconds (default: 30)
-```
-
-## Monitoring Integration
-
-Patch Gremlin provides multiple ways to integrate with monitoring systems:
-
-### Health Check Script
-
-```bash
-# Run health check
+# Quick health check (for monitoring)
 sudo ./health-check.sh
 
-# Exit codes:
+# Full deployment test
+sudo ./test-deployment.sh
+
+# Toggle verbose logging
+sudo ./configure-verbosity.sh
+
+# Check service status
+sudo systemctl status update-notifier.timer
+sudo systemctl list-timers update-notifier*
+
+# View logs
+sudo journalctl -t patch-gremlin --since "1 day ago"
+sudo journalctl -f -t patch-gremlin
+```
+
+### Monitoring Integration
+
+#### Health Check (Exit Codes)
+
+```bash
+sudo ./health-check.sh
 # 0 = Healthy
-# 1 = Warning (non-critical issues)
+# 1 = Warning (non-critical)
 # 2 = Critical (service broken)
 ```
 
-### Nagios/Icinga
+Perfect for Nagios, Zabbix, Icinga, etc.
+
+#### Diagnostics (Human-Readable)
 
 ```bash
-# /etc/nagios/nrpe.cfg
-command[check_patch_gremlin]=/path/to/patch-gremlin/health-check.sh
-
-# Nagios service definition
-define service {
-    service_description     Patch Gremlin Health
-    check_command          check_nrpe!check_patch_gremlin
-    normal_check_interval  60
-    retry_check_interval   5
-}
+sudo ./diagnose-config.sh
 ```
 
-### Prometheus/Grafana
+Shows:
+- Secret storage mode (LOCAL vs DOPPLER)
+- Configured webhooks
+- Service status
+- Timer schedule
+- Live notification test
+- Troubleshooting tips
+
+## Files & Structure
+
+### Installed Files
+
+```
+/usr/local/bin/
+├── update-notifier.sh                  # Main notification script
+
+/etc/update-notifier/
+├── secrets.conf                        # Local secrets (if using local mode)
+└── config.sh                           # Doppler config (if using Doppler mode)
+
+/etc/systemd/system/
+├── update-notifier.service             # Notification service
+├── update-notifier.timer               # Scheduled timer
+└── apt-daily-upgrade.timer.d/          # (Debian) Schedule override
+    └── schedule.conf
+
+/etc/apt/apt.conf.d/                    # (Debian only)
+├── 20auto-upgrades                     # APT periodic config
+├── 50unattended-upgrades              # Unattended-upgrades config
+└── 99patch-gremlin-notification       # Post-upgrade hook
+
+/etc/dnf/automatic.conf                 # (RHEL only) DNF automatic config
+/etc/systemd/system/dnf-automatic.service.d/  # (RHEL only)
+└── patch-gremlin.conf                  # Post-upgrade hook
+
+/usr/local/bin/patch-gremlin-dnf-hook.sh      # (RHEL only) DNF hook script
+```
+
+### Repository Scripts
 
 ```bash
-# Create metrics exporter script
-#!/bin/bash
-if ./health-check.sh &>/dev/null; then
-    echo "patch_gremlin_health 1"
-else
-    echo "patch_gremlin_health 0"
-fi
-echo "patch_gremlin_last_run $(stat -c %Y /var/log/patch-gremlin.log 2>/dev/null || echo 0)"
+setup-unattended-upgrades.sh    # Interactive installer
+update-notifier.sh              # Notification script (copied to /usr/local/bin)
+uninstall.sh                    # Complete removal
+config.example.sh               # Template for Doppler custom secret names
+
+# User tools
+diagnose-config.sh              # Detailed diagnostics + troubleshooting
+health-check.sh                 # Simple monitoring (exit codes)
+configure-verbosity.sh          # Toggle debug logging on/off
+test-deployment.sh              # Comprehensive testing
+
+# Monitoring examples
+monitoring/
+├── nagios-check.sh             # Nagios/Icinga integration
+└── prometheus-exporter.sh      # Prometheus metrics
 ```
 
-### Zabbix
+## Advanced Configuration
+
+### Environment Variables
+
+Customize script behavior:
 
 ```bash
-# Zabbix agent configuration
-UserParameter=patch_gremlin.health,/path/to/health-check.sh >/dev/null 2>&1; echo $?
-UserParameter=patch_gremlin.last_notification,grep "SUCCESS: Notification delivery complete" /var/log/syslog | tail -1 | cut -d' ' -f1-3
+# Testing
+PATCH_GREMLIN_DRY_RUN=true              # Test mode (no actual sending)
+
+# Performance tuning
+PATCH_GREMLIN_MAX_LOG_LINES=100         # Log lines (default: 50)
+PATCH_GREMLIN_RETRY_COUNT=5             # HTTP retries (default: 3)
+PATCH_GREMLIN_RETRY_DELAY=5             # Retry delay seconds (default: 2)
+PATCH_GREMLIN_CURL_TIMEOUT=60           # HTTP timeout seconds (default: 30)
 ```
 
-### Log Monitoring
+### Adjusting Verbosity
 
-Patch Gremlin logs to syslog with tag `patch-gremlin`. Monitor these patterns:
+Change log verbosity after installation:
 
 ```bash
-# Success patterns
-grep "SUCCESS: Notification delivery complete" /var/log/syslog
-grep "SUCCESS: Sent notification" /var/log/syslog
+# Interactive toggle
+sudo ./configure-verbosity.sh
 
-# Error patterns
-grep "ERROR:" /var/log/syslog | grep patch-gremlin
-grep "All notification attempts failed" /var/log/syslog
-
-# Update activity
-grep "package(s) updated" /var/log/syslog | grep patch-gremlin
+# Shows current setting, lets you enable/disable verbose DEBUG output
 ```
 
-### Systemd Journal Monitoring
+**Quiet mode (default):**
+- Shows package updates installed
+- Shows errors if they occur
+- Clean, readable logs
 
-```bash
-# Monitor service status
-journalctl -u update-notifier.service --since "1 hour ago"
-journalctl -u update-notifier.timer --since "1 day ago"
+**Verbose mode:**
+- Shows detailed DEBUG from unattended-upgrades
+- Package checking details
+- Origin pattern matching
+- Useful for troubleshooting
 
-# Follow logs in real-time
-journalctl -f -t patch-gremlin
+### Upgrading Existing Installation
+
+If Patch Gremlin is already installed, the setup script will detect it and offer options:
+
+```
+Options:
+  1) Reinstall/Reconfigure (preserves nothing)
+  2) Update scripts only (keeps configuration)
+  3) Cancel installation
 ```
 
-### Alerting Rules
-
-Recommended alerts to configure:
-
-1. **Service Down**: `update-notifier.timer` inactive for >25 hours
-2. **Notification Failures**: Error logs from patch-gremlin in last 24h
-3. **No Updates**: No "package(s) updated" logs for >30 days (optional)
-4. **Health Check**: `health-check.sh` returns exit code 2
-5. **Doppler Auth**: "Doppler authentication failed" in logs
-
-
+Choose option 2 to update the scripts while keeping your current configuration.
 
 ## Troubleshooting
 
-### Config not loading
+### Quick Diagnostics
 
 ```bash
-# Ensure config exists in system location
-sudo cp ~/src/scripts/config.sh /etc/update-notifier/config.sh
-sudo chmod 644 /etc/update-notifier/config.sh
+# Run comprehensive diagnostics
+sudo ./diagnose-config.sh
 ```
 
-### Doppler authentication lost after reboot
+This will check:
+- Secret storage configuration
+- Systemd service setup
+- Timer status and schedule
+- Network connectivity
+- Live notification test
 
-Doppler stores auth in `/root/.doppler/` which persists across reboots. If you see auth errors:
+### Common Issues
+
+#### 1. LOCAL mode but no notifications sent
+
 ```bash
+# Check secrets file exists and has content
+sudo cat /etc/update-notifier/secrets.conf
+
+# Edit and add webhook URLs
+sudo nano /etc/update-notifier/secrets.conf
+
+# Test notification
+sudo /usr/local/bin/update-notifier.sh
+```
+
+#### 2. DOPPLER mode authentication fails
+
+```bash
+# Re-authenticate
 sudo doppler login
 sudo doppler setup --project your-project --config your-config
+
+# Verify secrets exist
+doppler secrets --only-names
+
+# Check service has token
+systemctl show update-notifier.service | grep DOPPLER_TOKEN
 ```
 
-### Hostname resolution error after changing hostname
+#### 3. Timer not running
 
-Update `/etc/hosts`:
 ```bash
-sudo nano /etc/hosts
-# Change old hostname to new hostname on the 127.0.1.1 line
+# Check timer status
+sudo systemctl status update-notifier.timer
+
+# Enable and start if needed
+sudo systemctl enable --now update-notifier.timer
+
+# View schedule
+sudo systemctl list-timers update-notifier*
 ```
 
-### Matrix login fails
+#### 4. Script runs but notifications fail
 
-Check your username format in Doppler:
 ```bash
-doppler secrets get MATRIX_USERNAME --plain
-# Should show just "username", not "@username:server"
+# Check recent logs
+sudo journalctl -t patch-gremlin --since "1 hour ago"
+
+# Test with dry run
+sudo PATCH_GREMLIN_DRY_RUN=true /usr/local/bin/update-notifier.sh
+
+# Check webhook URLs are correct
+# LOCAL mode:
+sudo cat /etc/update-notifier/secrets.conf
+
+# DOPPLER mode:
+doppler secrets get UPDATE_NOTIFIER_DISCORD_WEBHOOK --plain
 ```
+
+#### 5. Too much DEBUG output in logs
+
+```bash
+# Disable verbose logging
+sudo ./configure-verbosity.sh
+# Choose option 1 (Disable)
+```
+
+#### 6. Matrix login fails
+
+Check username format - should be just the localpart:
+```bash
+# LOCAL mode:
+grep MATRIX_USERNAME /etc/update-notifier/secrets.conf
+# Should show: MATRIX_USERNAME="username"
+# NOT: MATRIX_USERNAME="@username:matrix.org"
+
+# DOPPLER mode:
+doppler secrets get UPDATE_NOTIFIER_MATRIX_USERNAME --plain
+# Should show just: username
+```
+
+### Getting Help
+
+1. Run diagnostics: `sudo ./diagnose-config.sh`
+2. Check logs: `sudo journalctl -t patch-gremlin --since "1 day ago"`
+3. See [GitHub Issues](https://github.com/ChiefGyk3D/Patch-Gremlin/issues)
+4. Join [Discord](https://discord.chiefgyk3d.com) or [Matrix](https://matrix-invite.chiefgyk3d.com)
 
 ## Uninstallation
 
@@ -373,52 +513,82 @@ doppler secrets get MATRIX_USERNAME --plain
 sudo ./uninstall.sh
 ```
 
-## Documentation
+This will remove:
+- Notification script from `/usr/local/bin/`
+- Systemd service and timer
+- Configuration files
+- Post-upgrade hooks (APT or DNF)
+- Local secrets file (if present)
 
-- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Command cheat sheet
-- **[MATRIX_SETUP.md](MATRIX_SETUP.md)** - Matrix-specific setup
-- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Detailed troubleshooting
+**Note**: Doppler secrets are NOT removed (they may be used by other systems).
 
 ## Requirements
 
-- Debian 12+ (Bookworm/Trixie) OR RHEL 8+/Rocky/AlmaLinux/Amazon Linux 2023/Fedora
-- Root/sudo access
-- Doppler CLI
-- Discord webhook URL and/or Matrix account
+- **OS**: Debian 12+, Ubuntu 20.04+, RHEL 8+, Rocky 8+, AlmaLinux 8+, Amazon Linux 2023, Fedora 35+
+- **Access**: Root/sudo privileges
+- **Secrets**: At least one notification platform configured
+- **Optional**: Doppler CLI (only if using Doppler mode)
 
 ## Supported Operating Systems
 
 **Debian-based:**
 - Debian 12 (Bookworm), 13 (Trixie)
-- Ubuntu 20.04+
+- Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS
+- Raspberry Pi OS
 - Other Debian derivatives
 
 **RHEL-based:**
-- Red Hat Enterprise Linux 8+
-- Rocky Linux 8+
-- AlmaLinux 8+
+- Red Hat Enterprise Linux 8, 9
+- Rocky Linux 8, 9
+- AlmaLinux 8, 9
 - Amazon Linux 2023
 - Fedora 35+
 
 ## How It Works
 
+### Update Process
+
 **Debian/Ubuntu:**
-1. **unattended-upgrades** automatically installs security updates
-2. **APT hook** triggers notification script after upgrades complete
-3. **systemd timer** provides backup daily notifications
+1. `unattended-upgrades` runs automatically (via systemd timer or apt-daily)
+2. Security updates are downloaded and installed
+3. APT post-invoke hook triggers `update-notifier.sh`
+4. Script analyzes logs and sends notifications
 
 **RHEL/Fedora/Amazon Linux:**
-1. **dnf-automatic** automatically installs security updates
-2. **systemd service hook** triggers notification script after upgrades complete
-3. **dnf-automatic.timer** runs daily (configured by dnf-automatic)
+1. `dnf-automatic` runs automatically (via systemd timer)
+2. Security updates are downloaded and installed
+3. DNF systemd hook triggers `update-notifier.sh`
+4. Script analyzes logs and sends notifications
 
-**Both systems:**
-- **Notification script**:
-  - Loads config from `/etc/update-notifier/config.sh`
-  - Retrieves credentials from Doppler using custom secret names
-  - Analyzes log files to determine actual update status
-  - Sends intelligent notifications with appropriate titles and colors
-  - Includes timezone-aware timestamps and package counts
+### Notification Script Logic
+
+1. **Load Configuration**
+   - Check if LOCAL mode: read `/etc/update-notifier/secrets.conf`
+   - Check if DOPPLER mode: use environment variables from systemd service
+   - Fall back to Doppler CLI if needed
+
+2. **Analyze Logs**
+   - Parse system logs (syslog or journald)
+   - Detect actual package updates vs no updates
+   - Extract package names and counts
+   - Determine notification color/priority
+
+3. **Send Notifications**
+   - Format message for each platform
+   - Include hostname, timestamp (timezone-aware), log excerpt
+   - Retry on failure (configurable retries and delays)
+   - Log success/failure to syslog
+
+4. **Clean Exit**
+   - Return appropriate exit code
+   - Clean up temporary files
+
+### Security
+
+- **Local secrets**: File is `chmod 600` (root read/write only)
+- **Doppler secrets**: Service token embedded in systemd Environment directives
+- **No passwords in logs**: All credentials are redacted from log output
+- **HTTPS only**: All webhook calls use secure connections
 
 ## License
 
@@ -433,38 +603,38 @@ sudo ./uninstall.sh
 
 Issues and pull requests welcome! By contributing, you agree to license your contributions under the same dual license (MPL-2.0 / Commercial).
 
+**Ways to contribute:**
+- 🐛 Report bugs
+- 💡 Suggest features
+- 📖 Improve documentation
+- 🔧 Submit code improvements
+- ⭐ Star the repository
+- 📢 Share with others
+
 ---
 
 ## 💬 Community & Support
-
-### Get Involved
-
-- **⭐ Star the repo** - Show your support!
-- **📢 Share** - Tell other sysadmins about Patch Gremlin
-- **🐛 Report bugs** - Help us improve quality
-- **💡 Request features** - Share your ideas
-- **🔧 Contribute** - Submit pull requests
-- **📖 Improve docs** - Help others get started
 
 ### Community Channels
 
 - **[GitHub Discussions](https://github.com/ChiefGyk3D/Patch-Gremlin/discussions)** - Ask questions, share setups
 - **[GitHub Issues](https://github.com/ChiefGyk3D/Patch-Gremlin/issues)** - Bug reports and feature requests
-- **[Pull Requests](https://github.com/ChiefGyk3D/Patch-Gremlin/pulls)** - Contribute code and improvements
+- **[Discord Server](https://discord.chiefgyk3d.com)** - Real-time chat and support
+- **[Matrix Space](https://matrix-invite.chiefgyk3d.com)** - Federated chat alternative
 
 ### Stay Updated
 
 - **Watch releases** - Get notified of new versions
-- **Follow development** - Track progress on roadmap items
+- **Follow development** - Track progress on roadmap
 - **Join discussions** - Participate in feature planning
 
 ---
 
-## 💝 Donations and Tips
+## 💝 Support Development
 
 If you find Patch Gremlin useful, consider supporting development:
 
-**Donate**:
+### Recurring Support
 
 <div align="center">
   <table>
