@@ -54,6 +54,13 @@ fi
 
 echo "Detected OS: $OS_ID $OS_VERSION (type: $OS_TYPE)"
 
+# Initialize variables with defaults
+UPDATE_TYPE="${UPDATE_TYPE:-}"
+UPDATE_SCHEDULE="${UPDATE_SCHEDULE:-}"
+SYSTEM_TIMEZONE="${SYSTEM_TIMEZONE:-}"
+SECRET_MODE="${SECRET_MODE:-}"
+UPDATE_TIME="${UPDATE_TIME:-02:00}"
+
 # Ask user about update scope (unless already set via environment)
 if [[ -z "$UPDATE_TYPE" ]]; then
     echo -e "\n${YELLOW}Update Configuration:${NC}"
@@ -234,23 +241,35 @@ fi
 
 echo ""
 
-# Load configuration from file if it exists
+# Load configuration from file if it exists with enhanced validation
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+load_config_safely() {
+    local config_file="$1"
+    echo "Loading configuration from $config_file"
+    
+    # Enhanced validation: check for dangerous patterns
+    if grep -qE '(\$\(|`|;|\||&|>|<|\{|\})' "$config_file"; then
+        echo -e "${RED}Error: Config file contains potentially dangerous commands${NC}"
+        return 1
+    fi
+    
+    # Check for valid export statements only
+    if grep -q '^[[:space:]]*export[[:space:]]\+[A-Z_][A-Z0-9_]*=' "$config_file"; then
+        # Create temp file with only export lines
+        local temp_config=$(mktemp)
+        grep '^[[:space:]]*export[[:space:]]\+[A-Z_][A-Z0-9_]*=' "$config_file" > "$temp_config"
+        source "$temp_config"
+        rm -f "$temp_config"
+    else
+        echo -e "${YELLOW}Warning: config.sh doesn't contain valid export statements${NC}"
+        return 1
+    fi
+}
+
 if [[ -f "$SCRIPT_DIR/config.sh" ]] && [[ -r "$SCRIPT_DIR/config.sh" ]]; then
-    echo "Loading configuration from $SCRIPT_DIR/config.sh"
-    # Basic validation: check if file contains only variable assignments
-    if grep -q '^[[:space:]]*export[[:space:]]\+[A-Z_][A-Z0-9_]*=' "$SCRIPT_DIR/config.sh"; then
-        source "$SCRIPT_DIR/config.sh"
-    else
-        echo -e "${YELLOW}Warning: config.sh doesn't appear to contain valid configuration${NC}"
-    fi
+    load_config_safely "$SCRIPT_DIR/config.sh"
 elif [[ -f /etc/update-notifier/config.sh ]] && [[ -r /etc/update-notifier/config.sh ]]; then
-    echo "Loading configuration from /etc/update-notifier/config.sh"
-    if grep -q '^[[:space:]]*export[[:space:]]\+[A-Z_][A-Z0-9_]*=' /etc/update-notifier/config.sh; then
-        source /etc/update-notifier/config.sh
-    else
-        echo -e "${YELLOW}Warning: config.sh doesn't appear to contain valid configuration${NC}"
-    fi
+    load_config_safely "/etc/update-notifier/config.sh"
 fi
 
 # Configuration - Set defaults for any variables not set by config.sh
@@ -390,10 +409,19 @@ EOF
 
     # Configure apt-daily-upgrade.timer to run at specific time
     mkdir -p /etc/systemd/system/apt-daily-upgrade.timer.d/
+    
+    # Backup existing timer override if it exists
+    if [[ -f /etc/systemd/system/apt-daily-upgrade.timer.d/schedule.conf ]]; then
+        cp /etc/systemd/system/apt-daily-upgrade.timer.d/schedule.conf \
+           /etc/systemd/system/apt-daily-upgrade.timer.d/schedule.conf.backup.$(date +%Y%m%d-%H%M%S)
+        echo -e "${YELLOW}Backed up existing timer configuration${NC}"
+    fi
+    
     if [[ "$UPDATE_SCHEDULE" == "weekly" ]]; then
         cat > /etc/systemd/system/apt-daily-upgrade.timer.d/schedule.conf << EOF
 [Timer]
 # Override default schedule - run weekly on ${UPDATE_DAY}day at ${UPDATE_TIME}
+# Patch Gremlin configuration
 OnCalendar=
 OnCalendar=${UPDATE_DAY} *-*-* ${UPDATE_TIME}:00
 RandomizedDelaySec=30min
@@ -402,6 +430,7 @@ EOF
         cat > /etc/systemd/system/apt-daily-upgrade.timer.d/schedule.conf << EOF
 [Timer]
 # Override default schedule - run daily at ${UPDATE_TIME}
+# Patch Gremlin configuration
 OnCalendar=
 OnCalendar=*-*-* ${UPDATE_TIME}:00
 RandomizedDelaySec=30min
@@ -466,10 +495,19 @@ EOF
 
     # Configure dnf-automatic timer based on user schedule
     mkdir -p /etc/systemd/system/dnf-automatic.timer.d/
+    
+    # Backup existing timer override if it exists
+    if [[ -f /etc/systemd/system/dnf-automatic.timer.d/schedule.conf ]]; then
+        cp /etc/systemd/system/dnf-automatic.timer.d/schedule.conf \
+           /etc/systemd/system/dnf-automatic.timer.d/schedule.conf.backup.$(date +%Y%m%d-%H%M%S)
+        echo -e "${YELLOW}Backed up existing timer configuration${NC}"
+    fi
+    
     if [[ "$UPDATE_SCHEDULE" == "weekly" ]]; then
         cat > /etc/systemd/system/dnf-automatic.timer.d/schedule.conf << EOF
 [Timer]
 # Override default schedule - run weekly on ${UPDATE_DAY}day at ${UPDATE_TIME}
+# Patch Gremlin configuration
 OnCalendar=
 OnCalendar=${UPDATE_DAY} *-*-* ${UPDATE_TIME}:00
 RandomizedDelaySec=30min
@@ -478,6 +516,7 @@ EOF
         cat > /etc/systemd/system/dnf-automatic.timer.d/schedule.conf << EOF
 [Timer]
 # Override default schedule - run daily at ${UPDATE_TIME}
+# Patch Gremlin configuration
 OnCalendar=
 OnCalendar=*-*-* ${UPDATE_TIME}:00
 RandomizedDelaySec=30min
@@ -601,17 +640,28 @@ fi
 # Create systemd service for post-upgrade notification
 echo -e "${YELLOW}Creating systemd service for notifications...${NC}"
 
-# Build environment variables based on mode
+# Build environment variables based on mode with proper escaping
 if [[ "$SECRET_MODE" == "doppler" ]]; then
-    SERVICE_ENV="Environment=\"DOPPLER_TOKEN=$DOPPLER_TOKEN\"
-Environment=\"DOPPLER_DISCORD_SECRET=$DOPPLER_DISCORD_SECRET\"
-Environment=\"DOPPLER_TEAMS_SECRET=$DOPPLER_TEAMS_SECRET\"
-Environment=\"DOPPLER_SLACK_SECRET=$DOPPLER_SLACK_SECRET\"
-Environment=\"DOPPLER_MATRIX_SECRET=$DOPPLER_MATRIX_SECRET\"
-Environment=\"DOPPLER_MATRIX_HOMESERVER_SECRET=$DOPPLER_MATRIX_HOMESERVER_SECRET\"
-Environment=\"DOPPLER_MATRIX_USERNAME_SECRET=$DOPPLER_MATRIX_USERNAME_SECRET\"
-Environment=\"DOPPLER_MATRIX_PASSWORD_SECRET=$DOPPLER_MATRIX_PASSWORD_SECRET\"
-Environment=\"DOPPLER_MATRIX_ROOM_ID_SECRET=$DOPPLER_MATRIX_ROOM_ID_SECRET\""
+    # Escape special characters for systemd
+    ESCAPED_TOKEN=$(printf '%s\n' "$DOPPLER_TOKEN" | sed 's/[\\"]/\\&/g')
+    ESCAPED_DISCORD=$(printf '%s\n' "$DOPPLER_DISCORD_SECRET" | sed 's/[\\"]/\\&/g')
+    ESCAPED_TEAMS=$(printf '%s\n' "$DOPPLER_TEAMS_SECRET" | sed 's/[\\"]/\\&/g')
+    ESCAPED_SLACK=$(printf '%s\n' "$DOPPLER_SLACK_SECRET" | sed 's/[\\"]/\\&/g')
+    ESCAPED_MATRIX=$(printf '%s\n' "$DOPPLER_MATRIX_SECRET" | sed 's/[\\"]/\\&/g')
+    ESCAPED_HOMESERVER=$(printf '%s\n' "$DOPPLER_MATRIX_HOMESERVER_SECRET" | sed 's/[\\"]/\\&/g')
+    ESCAPED_USERNAME=$(printf '%s\n' "$DOPPLER_MATRIX_USERNAME_SECRET" | sed 's/[\\"]/\\&/g')
+    ESCAPED_PASSWORD=$(printf '%s\n' "$DOPPLER_MATRIX_PASSWORD_SECRET" | sed 's/[\\"]/\\&/g')
+    ESCAPED_ROOM=$(printf '%s\n' "$DOPPLER_MATRIX_ROOM_ID_SECRET" | sed 's/[\\"]/\\&/g')
+    
+    SERVICE_ENV="Environment=\"DOPPLER_TOKEN=$ESCAPED_TOKEN\"
+Environment=\"DOPPLER_DISCORD_SECRET=$ESCAPED_DISCORD\"
+Environment=\"DOPPLER_TEAMS_SECRET=$ESCAPED_TEAMS\"
+Environment=\"DOPPLER_SLACK_SECRET=$ESCAPED_SLACK\"
+Environment=\"DOPPLER_MATRIX_SECRET=$ESCAPED_MATRIX\"
+Environment=\"DOPPLER_MATRIX_HOMESERVER_SECRET=$ESCAPED_HOMESERVER\"
+Environment=\"DOPPLER_MATRIX_USERNAME_SECRET=$ESCAPED_USERNAME\"
+Environment=\"DOPPLER_MATRIX_PASSWORD_SECRET=$ESCAPED_PASSWORD\"
+Environment=\"DOPPLER_MATRIX_ROOM_ID_SECRET=$ESCAPED_ROOM\""
 else
     SERVICE_ENV="Environment=\"SECRET_MODE=local\""
 fi
@@ -703,17 +753,18 @@ HOOKEOF
     # Create systemd override for dnf-automatic to run our hook
     mkdir -p /etc/systemd/system/dnf-automatic.service.d/
     
-    # Build environment variables based on mode
+    # Build environment variables based on mode with proper escaping
     if [[ "$SECRET_MODE" == "doppler" ]]; then
-        DNF_ENV="Environment=\"DOPPLER_TOKEN=$DOPPLER_TOKEN\"
-Environment=\"DOPPLER_DISCORD_SECRET=$DOPPLER_DISCORD_SECRET\"
-Environment=\"DOPPLER_TEAMS_SECRET=$DOPPLER_TEAMS_SECRET\"
-Environment=\"DOPPLER_SLACK_SECRET=$DOPPLER_SLACK_SECRET\"
-Environment=\"DOPPLER_MATRIX_SECRET=$DOPPLER_MATRIX_SECRET\"
-Environment=\"DOPPLER_MATRIX_HOMESERVER_SECRET=$DOPPLER_MATRIX_HOMESERVER_SECRET\"
-Environment=\"DOPPLER_MATRIX_USERNAME_SECRET=$DOPPLER_MATRIX_USERNAME_SECRET\"
-Environment=\"DOPPLER_MATRIX_PASSWORD_SECRET=$DOPPLER_MATRIX_PASSWORD_SECRET\"
-Environment=\"DOPPLER_MATRIX_ROOM_ID_SECRET=$DOPPLER_MATRIX_ROOM_ID_SECRET\""
+        # Use already escaped variables from above
+        DNF_ENV="Environment=\"DOPPLER_TOKEN=$ESCAPED_TOKEN\"
+Environment=\"DOPPLER_DISCORD_SECRET=$ESCAPED_DISCORD\"
+Environment=\"DOPPLER_TEAMS_SECRET=$ESCAPED_TEAMS\"
+Environment=\"DOPPLER_SLACK_SECRET=$ESCAPED_SLACK\"
+Environment=\"DOPPLER_MATRIX_SECRET=$ESCAPED_MATRIX\"
+Environment=\"DOPPLER_MATRIX_HOMESERVER_SECRET=$ESCAPED_HOMESERVER\"
+Environment=\"DOPPLER_MATRIX_USERNAME_SECRET=$ESCAPED_USERNAME\"
+Environment=\"DOPPLER_MATRIX_PASSWORD_SECRET=$ESCAPED_PASSWORD\"
+Environment=\"DOPPLER_MATRIX_ROOM_ID_SECRET=$ESCAPED_ROOM\""
     else
         DNF_ENV="Environment=\"SECRET_MODE=local\""
     fi
