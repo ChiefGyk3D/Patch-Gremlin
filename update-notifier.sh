@@ -333,10 +333,18 @@ else
         fi
     fi
     
-    # Prepare log output for notifications (last 15 lines, safely escaped)
-    LOG_OUTPUT=$(tail -n 15 "$TEMP_LOG" | python3 -c "import sys, json; print(json.dumps(sys.stdin.read())[1:-1])" 2>/dev/null || {
+    # Prepare log output for notifications - filter out DEBUG noise and keep only INFO/WARNING/ERROR
+    FILTERED_LOG=$(tail -n 30 "$TEMP_LOG" | grep -E '(INFO|WARNING|ERROR|CRITICAL)' | grep -v 'adjusting candidate' | grep -v 'pkgs that look like' | grep -v 'fetch.run' | grep -v 'Packages blacklist' | grep -v 'upgrade result' | tail -n 10)
+    
+    # If no meaningful logs, show a simple summary
+    if [[ -z "$FILTERED_LOG" ]]; then
+        FILTERED_LOG="Update check completed successfully with no actionable items."
+    fi
+    
+    # Prepare for JSON (safely escaped)
+    LOG_OUTPUT=$(echo "$FILTERED_LOG" | python3 -c "import sys, json; print(json.dumps(sys.stdin.read())[1:-1])" 2>/dev/null || {
         # Simple fallback escaping for JSON
-        tail -n 15 "$TEMP_LOG" | awk '{gsub(/\\/,"\\\\",$0); gsub(/"/,"\\\"",$0); gsub(/\t/,"\\t",$0); printf "%s ", $0}' | sed 's/[[:cntrl:]]//g'
+        echo "$FILTERED_LOG" | awk '{gsub(/\\/,"\\\\",$0); gsub(/"/,"\\\"",$0); gsub(/\t/,"\\t",$0); printf "%s ", $0}' | sed 's/[[:cntrl:]]//g'
     })
     
     log "INFO: Detected OS: $OS_TYPE, Status: $UPDATE_STATUS, Summary: $UPDATE_SUMMARY"
@@ -530,8 +538,8 @@ fi
 if [[ "$MATRIX_CONFIGURED" == true ]]; then
     log "INFO: Sending notification to Matrix..."
     
-    # Format log output for Matrix (plain text with newlines)
-    MATRIX_LOG=$(tail -n 15 "$TEMP_LOG" 2>/dev/null || echo "Log file not found")
+    # Format log output for Matrix (plain text with newlines) - filter for readability
+    MATRIX_LOG=$(tail -n 30 "$TEMP_LOG" 2>/dev/null | grep -E '(INFO|WARNING|ERROR|CRITICAL)' | grep -v 'adjusting candidate' | grep -v 'pkgs that look like' | grep -v 'fetch.run' | grep -v 'Packages blacklist' | grep -v 'upgrade result' | tail -n 10 || echo "Update check completed successfully with no actionable items.")
     
     if [[ "$MATRIX_USE_API" == true ]]; then
         # Use Matrix Client-Server API with username/password login

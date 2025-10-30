@@ -334,6 +334,17 @@ if [[ "$OS_TYPE" == "debian" ]]; then
             echo ""
             echo "Check if notification was sent!"
             echo "View logs: journalctl -xe | grep -i patch-gremlin"
+            echo ""
+            
+            # Offer to remove the test package
+            read -p "Remove vim-tiny test package? (Y/n): " -n 1 -r
+            echo ""
+            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                echo "Removing vim-tiny..."
+                apt-get remove -y vim-tiny
+                apt-get autoremove -y
+                echo "Test package removed"
+            fi
         else
             echo "Skipped hook test"
         fi
