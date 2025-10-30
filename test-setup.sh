@@ -69,37 +69,50 @@ else
     exit 1
 fi
 
-# Check if logged in to Doppler (check for current user or root)
+# Check if logged in to Doppler (check for current user or root) with retry logic
 echo -e "\n${YELLOW}Checking Doppler authentication...${NC}"
+check_doppler_auth() {
+    local max_attempts=3
+    local attempt=1
+    
+    while [[ $attempt -le $max_attempts ]]; do
+        if timeout 10 doppler me &>/dev/null; then
+            return 0
+        fi
+        ((attempt++))
+        [[ $attempt -le $max_attempts ]] && sleep 2
+    done
+    return 1
+}
+
 if [[ $AS_ROOT == true ]]; then
     # Running as root, check root's Doppler config
-    # Check if 'doppler me' returns successfully (exit code 0)
-    if doppler me &>/dev/null; then
-        DOPPLER_NAME=$(doppler me 2>/dev/null | grep -E "^\│" | head -2 | tail -1 | awk -F'│' '{print $2}' | xargs || echo "unknown")
+    if check_doppler_auth; then
+        DOPPLER_NAME=$(timeout 10 doppler me 2>/dev/null | grep -E "^\│" | head -2 | tail -1 | awk -F'│' '{print $2}' | xargs || echo "unknown")
         echo -e "  ${GREEN}✓${NC} Logged in as root user: $DOPPLER_NAME"
     else
-        echo -e "  ${RED}✗${NC} Not logged in to Doppler as root"
+        echo -e "  ${RED}✗${NC} Not logged in to Doppler as root (or network timeout)"
         echo -e "    Run: ${BLUE}sudo doppler login${NC}"
         exit 1
     fi
 else
     # Running as regular user
-    if doppler me &>/dev/null; then
-        DOPPLER_NAME=$(doppler me 2>/dev/null | grep -E "^\│" | head -2 | tail -1 | awk -F'│' '{print $2}' | xargs || echo "unknown")
+    if check_doppler_auth; then
+        DOPPLER_NAME=$(timeout 10 doppler me 2>/dev/null | grep -E "^\│" | head -2 | tail -1 | awk -F'│' '{print $2}' | xargs || echo "unknown")
         echo -e "  ${GREEN}✓${NC} Logged in as user: $DOPPLER_NAME"
         echo -e "  ${YELLOW}⚠${NC}  Note: Script runs as root, so root also needs to be logged in"
         echo -e "    Run: ${BLUE}sudo doppler login${NC} to configure for root user"
     else
-        echo -e "  ${RED}✗${NC} Not logged in to Doppler"
+        echo -e "  ${RED}✗${NC} Not logged in to Doppler (or network timeout)"
         echo -e "    Run: ${BLUE}doppler login${NC}"
         exit 1
     fi
 fi
 
-# Check Doppler setup (project configuration)
+# Check Doppler setup (project configuration) with timeout
 echo -e "\n${YELLOW}Checking Doppler configuration...${NC}"
-DOPPLER_PROJECT=$(doppler configure get project --plain 2>/dev/null)
-DOPPLER_CONFIG=$(doppler configure get config --plain 2>/dev/null)
+DOPPLER_PROJECT=$(timeout 10 doppler configure get project --plain 2>/dev/null || echo "")
+DOPPLER_CONFIG=$(timeout 10 doppler configure get config --plain 2>/dev/null || echo "")
 if [[ -n "$DOPPLER_PROJECT" ]] && [[ -n "$DOPPLER_CONFIG" ]]; then
     echo -e "  ${GREEN}✓${NC} Doppler project configured"
     echo -e "    Project: $DOPPLER_PROJECT"
