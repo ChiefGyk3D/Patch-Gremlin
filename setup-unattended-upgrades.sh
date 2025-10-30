@@ -496,8 +496,10 @@ Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
 // Logging
 Unattended-Upgrade::SyslogEnable "true";
 Unattended-Upgrade::SyslogFacility "daemon";
-Unattended-Upgrade::Verbose "${VERBOSE_LOGGING}";
 EOF
+    
+    # Add verbose setting (must be outside heredoc to allow variable expansion)
+    echo "Unattended-Upgrade::Verbose \"${VERBOSE_LOGGING}\";" >> /etc/apt/apt.conf.d/50unattended-upgrades
 
     # Create auto-upgrades configuration - always enable, schedule controlled by timer
     # Verbose level: 0=quiet, 1=some, 2=debug
