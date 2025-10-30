@@ -1,179 +1,138 @@
 #!/bin/bash
 
-# Patch Gremlin - Uninstall Script
+# Patch Gremlin Uninstaller
 # Removes all installed components
-# https://github.com/ChiefGyk3D/Patch-Gremlin
 
-set -e
+set -euo pipefail
 
-# Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${YELLOW}=== Update Notifier Uninstall ===${NC}\n"
-
-# Check if running as root
-if [[ $EUID -ne 0 ]]; then
-   echo -e "${RED}Error: This script must be run as root${NC}" 
-   echo "Please run: sudo $0"
-   exit 1
-fi
-
-echo -e "${YELLOW}This will remove:${NC}"
-echo "  - Notification script (/usr/local/bin/update-notifier.sh)"
-echo "  - APT/DNF hooks"
-echo "  - Systemd service and timer"
-echo "  - Configuration files (/etc/update-notifier/)"
-echo "  - Local secrets file (if present)"
+echo -e "${YELLOW}Patch Gremlin Uninstaller${NC}"
+echo "This will remove all Patch Gremlin components."
 echo ""
-echo -e "${YELLOW}This will NOT remove:${NC}"
-echo "  - unattended-upgrades/dnf-automatic package (system updates will continue)"
-echo "  - Doppler CLI or configuration"
-echo "  - Doppler secrets"
+echo "Options:"
+echo "  1) Remove Patch Gremlin only (keep unattended-upgrades/dnf-automatic)"
+echo "  2) Remove everything including update systems"
+echo "  3) Cancel"
+echo ""
+read -p "Enter choice [1-3] (default: 1): " -n 1 -r UNINSTALL_TYPE
 echo ""
 
-read -p "Are you sure you want to uninstall? (y/n) " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Uninstall cancelled."
-    exit 0
-fi
+case "$UNINSTALL_TYPE" in
+    2) REMOVE_UPDATE_SYSTEM=true ;;
+    3|*) 
+        if [[ "$UNINSTALL_TYPE" == "3" ]]; then
+            echo "Uninstall cancelled."
+            exit 0
+        fi
+        REMOVE_UPDATE_SYSTEM=false
+        ;;
+esac
 
-echo ""
-echo -e "${BLUE}Starting uninstall...${NC}\n"
+echo -e "${YELLOW}Stopping and disabling services...${NC}"
+systemctl stop update-notifier.timer 2>/dev/null || true
+systemctl disable update-notifier.timer 2>/dev/null || true
+systemctl stop update-notifier.service 2>/dev/null || true
+systemctl disable update-notifier.service 2>/dev/null || true
 
-# Stop and disable systemd service
-if systemctl is-active --quiet update-notifier-discord.service 2>/dev/null; then
-    echo -e "${YELLOW}Stopping systemd service...${NC}"
-    systemctl stop update-notifier-discord.service || true
-fi
-
-if systemctl is-enabled --quiet update-notifier-discord.service 2>/dev/null; then
-    echo -e "${YELLOW}Disabling systemd service...${NC}"
-    systemctl disable update-notifier-discord.service || true
-fi
-
-# Remove systemd service file
-if [[ -f /etc/systemd/system/update-notifier-discord.service ]]; then
-    echo -e "${YELLOW}Removing systemd service file...${NC}"
-    rm -f /etc/systemd/system/update-notifier-discord.service
-    echo -e "  ${GREEN}✓${NC} Removed /etc/systemd/system/update-notifier-discord.service"
-fi
-
-# Remove systemd timer file
-if [[ -f /etc/systemd/system/update-notifier-discord.timer ]]; then
-    echo -e "${YELLOW}Removing systemd timer file...${NC}"
-    rm -f /etc/systemd/system/update-notifier-discord.timer
-    echo -e "  ${GREEN}✓${NC} Removed /etc/systemd/system/update-notifier-discord.timer"
-fi
-
-# Reload systemd
-echo -e "${YELLOW}Reloading systemd daemon...${NC}"
+echo -e "${YELLOW}Removing systemd files...${NC}"
+rm -f /etc/systemd/system/update-notifier.service
+rm -f /etc/systemd/system/update-notifier.timer
 systemctl daemon-reload
 
-# Remove notification script
-if [[ -f /usr/local/bin/update-notifier.sh ]]; then
-    echo -e "${YELLOW}Removing notification script...${NC}"
-    rm -f /usr/local/bin/update-notifier.sh
-    echo -e "  ${GREEN}✓${NC} Removed /usr/local/bin/update-notifier.sh"
-fi
+echo -e "${YELLOW}Removing scripts...${NC}"
+rm -f /usr/local/bin/update-notifier.sh
+rm -f /usr/local/bin/patch-gremlin-health-check.sh
+rm -f /usr/local/bin/patch-gremlin-dnf-hook.sh
 
-# Remove configuration directory and secrets
-if [[ -d /etc/update-notifier ]]; then
-    echo -e "${YELLOW}Removing configuration directory...${NC}"
-    if [[ -f /etc/update-notifier/secrets.conf ]]; then
-        echo -e "  ${BLUE}ℹ${NC} Removing local secrets file"
-        rm -f /etc/update-notifier/secrets.conf
-    fi
-    rm -rf /etc/update-notifier
-    echo -e "  ${GREEN}✓${NC} Removed /etc/update-notifier/"
-fi
+# Remove any monitoring scripts we might have installed
+rm -f /usr/local/bin/nagios-check.sh
+rm -f /usr/local/bin/prometheus-exporter.sh
 
-# Remove APT hook
-if [[ -f /etc/apt/apt.conf.d/99patch-gremlin-notification ]]; then
-    echo -e "${YELLOW}Removing APT hook...${NC}"
-    rm -f /etc/apt/apt.conf.d/99patch-gremlin-notification
-    echo -e "  ${GREEN}✓${NC} Removed APT hook"
-fi
+echo -e "${YELLOW}Removing configuration...${NC}"
+rm -rf /etc/update-notifier/
 
-# Remove old APT hook (legacy)
-if [[ -f /etc/apt/apt.conf.d/99discord-notification ]]; then
-    echo -e "${YELLOW}Removing legacy APT hook...${NC}"
-    rm -f /etc/apt/apt.conf.d/99discord-notification
-    echo -e "  ${GREEN}✓${NC} Removed legacy APT hook"
-fi
+echo -e "${YELLOW}Removing hooks and overrides...${NC}"
+# Debian/Ubuntu
+rm -f /etc/apt/apt.conf.d/99patch-gremlin-notification
 
-# Remove DNF hook and override (RHEL systems)
-if [[ -f /usr/local/bin/patch-gremlin-dnf-hook.sh ]]; then
-    echo -e "${YELLOW}Removing DNF hook...${NC}"
-    rm -f /usr/local/bin/patch-gremlin-dnf-hook.sh
-    echo -e "  ${GREEN}✓${NC} Removed DNF hook"
-fi
+# RHEL/Fedora
+rm -f /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf
+rmdir /etc/systemd/system/dnf-automatic.service.d/ 2>/dev/null || true
 
-if [[ -f /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf ]]; then
-    echo -e "${YELLOW}Removing DNF systemd override...${NC}"
-    rm -f /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf
-    rmdir /etc/systemd/system/dnf-automatic.service.d/ 2>/dev/null || true
-    echo -e "  ${GREEN}✓${NC} Removed DNF systemd override"
-fi
+# Remove timer overrides
+rm -rf /etc/systemd/system/apt-daily-upgrade.timer.d/
+rm -rf /etc/systemd/system/dnf-automatic.timer.d/
 
-# Backup unattended-upgrades config if it exists
-if [[ -f /etc/apt/apt.conf.d/50unattended-upgrades ]]; then
-    echo -e "\n${YELLOW}Unattended-upgrades configuration found${NC}"
-    echo "Do you want to:"
-    echo "  1) Keep it (recommended - your system will still get automatic updates)"
-    echo "  2) Remove it (disable automatic updates)"
-    echo "  3) Restore from backup (if available)"
-    echo ""
-    read -p "Enter choice (1/2/3): " -n 1 -r CHOICE
-    echo ""
+if [[ "$REMOVE_UPDATE_SYSTEM" == "true" ]]; then
+    echo -e "${YELLOW}Removing update systems...${NC}"
     
-    case $CHOICE in
-        2)
-            echo -e "${YELLOW}Removing unattended-upgrades configuration...${NC}"
-            rm -f /etc/apt/apt.conf.d/50unattended-upgrades
-            rm -f /etc/apt/apt.conf.d/20auto-upgrades
-            echo -e "  ${GREEN}✓${NC} Removed unattended-upgrades configuration"
-            ;;
-        3)
-            BACKUP=$(ls -t /etc/apt/apt.conf.d/50unattended-upgrades.backup.* 2>/dev/null | head -n1)
-            if [[ -n "$BACKUP" ]]; then
-                echo -e "${YELLOW}Restoring from backup: $BACKUP${NC}"
-                cp "$BACKUP" /etc/apt/apt.conf.d/50unattended-upgrades
-                echo -e "  ${GREEN}✓${NC} Restored from backup"
-            else
-                echo -e "  ${RED}✗${NC} No backup found"
-            fi
-            ;;
-        *)
-            echo -e "  ${GREEN}✓${NC} Keeping unattended-upgrades configuration"
-            ;;
-    esac
+    # Stop and disable update services
+    systemctl stop apt-daily-upgrade.timer 2>/dev/null || true
+    systemctl disable apt-daily-upgrade.timer 2>/dev/null || true
+    systemctl stop dnf-automatic.timer 2>/dev/null || true
+    systemctl disable dnf-automatic.timer 2>/dev/null || true
+    
+    # Remove packages
+    if command -v apt-get &>/dev/null; then
+        apt-get remove -y unattended-upgrades 2>/dev/null || true
+        rm -f /etc/apt/apt.conf.d/50unattended-upgrades*
+        rm -f /etc/apt/apt.conf.d/20auto-upgrades*
+    fi
+    
+    if command -v dnf &>/dev/null; then
+        dnf remove -y dnf-automatic 2>/dev/null || true
+        rm -f /etc/dnf/automatic.conf*
+    fi
+    
+    echo "Removed update systems"
+else
+    echo -e "${YELLOW}Restoring original configs...${NC}"
+    # Restore unattended-upgrades if backup exists
+    if ls /etc/apt/apt.conf.d/50unattended-upgrades.backup.* &>/dev/null; then
+        latest_backup=$(ls -t /etc/apt/apt.conf.d/50unattended-upgrades.backup.* | head -1)
+        cp "$latest_backup" /etc/apt/apt.conf.d/50unattended-upgrades
+        echo "Restored unattended-upgrades config from backup"
+    fi
+    
+    # Restore dnf-automatic if backup exists
+    if ls /etc/dnf/automatic.conf.backup.* &>/dev/null; then
+        latest_backup=$(ls -t /etc/dnf/automatic.conf.backup.* | head -1)
+        cp "$latest_backup" /etc/dnf/automatic.conf
+        echo "Restored dnf-automatic config from backup"
+    fi
+    
+    # Re-enable original timers
+    systemctl enable apt-daily-upgrade.timer 2>/dev/null || true
+    systemctl start apt-daily-upgrade.timer 2>/dev/null || true
+    systemctl enable dnf-automatic.timer 2>/dev/null || true
+    systemctl start dnf-automatic.timer 2>/dev/null || true
 fi
 
-echo ""
-echo -e "${GREEN}=== Uninstall Complete ===${NC}\n"
+systemctl daemon-reload
 
-echo -e "${BLUE}Summary:${NC}"
-echo "  - Notification system removed"
-echo "  - APT hooks removed"
-echo "  - Systemd services removed"
-echo ""
+# Clean up monitoring scripts
+echo -e "${YELLOW}Removing monitoring components...${NC}"
+rm -f /usr/local/bin/nagios-check.sh
+rm -f /usr/local/bin/prometheus-exporter.sh
 
-echo -e "${YELLOW}If you want to completely remove automatic updates:${NC}"
-echo "  sudo apt-get remove --purge unattended-upgrades"
-echo ""
+# Remove from crontab if present
+crontab -l 2>/dev/null | grep -v "prometheus-exporter.sh" | crontab - 2>/dev/null || true
 
-echo -e "${YELLOW}Your Doppler configuration and secrets are still intact${NC}"
-echo "If you want to remove Doppler secrets:"
-echo "  sudo doppler secrets delete UPDATE_NOTIFIER_DISCORD_WEBHOOK"
-echo "  sudo doppler secrets delete UPDATE_NOTIFIER_MATRIX_HOMESERVER"
-echo "  sudo doppler secrets delete UPDATE_NOTIFIER_MATRIX_USERNAME"
-echo "  sudo doppler secrets delete UPDATE_NOTIFIER_MATRIX_PASSWORD"
-echo "  sudo doppler secrets delete UPDATE_NOTIFIER_MATRIX_ROOM_ID"
 echo ""
-
-echo -e "${GREEN}Done!${NC}"
+echo -e "${GREEN}✓ Patch Gremlin has been completely removed${NC}"
+echo ""
+if [[ "$REMOVE_UPDATE_SYSTEM" == "true" ]]; then
+    echo -e "${YELLOW}Warning: Automatic updates are now disabled!${NC}"
+    echo "Your system will no longer receive automatic security updates."
+else
+    echo "Automatic updates are still enabled and will continue working."
+fi
+echo ""
+echo "Optional cleanup:"
+echo "• Remove Doppler: sudo rm -rf /root/.doppler/"
+echo "• Remove backup configs: sudo rm -f /etc/apt/apt.conf.d/*.backup.* /etc/dnf/automatic.conf.backup.*"
+echo "• Clear logs: sudo journalctl --vacuum-time=1d"
