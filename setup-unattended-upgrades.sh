@@ -258,6 +258,29 @@ else
 fi
 echo ""
 
+# Ask about verbosity (unless already set via environment)
+if [[ -z "${VERBOSE_LOGGING:-}" ]]; then
+    echo -e "${YELLOW}Debug Logging:${NC}"
+    echo "Enable verbose debug output from unattended-upgrades?"
+    echo ""
+    echo "  • Verbose: See detailed DEBUG messages about every package check"
+    echo "  • Quiet: Only see important messages (installed packages, errors)"
+    echo ""
+    read -p "Enable verbose logging? (y/n) [default: n]: " -n 1 -r VERBOSE_CHOICE
+    echo ""
+    
+    if [[ "$VERBOSE_CHOICE" =~ ^[Yy]$ ]]; then
+        VERBOSE_LOGGING="true"
+        echo -e "${GREEN}Selected: Verbose logging enabled${NC}"
+    else
+        VERBOSE_LOGGING="false"
+        echo -e "${GREEN}Selected: Quiet logging (recommended)${NC}"
+    fi
+else
+    echo -e "\n${GREEN}Using preset verbosity: ${VERBOSE_LOGGING}${NC}"
+fi
+echo ""
+
 # Ask about secret storage method (unless already set via environment)
 if [[ -z "$SECRET_MODE" ]]; then
     echo -e "${YELLOW}Secret Storage:${NC}"
@@ -286,7 +309,7 @@ if [[ "$SECRET_MODE" == "doppler" ]]; then
         echo "You need a Doppler service token to allow the notification script to access secrets."
         echo ""
         echo "To create a token:"
-        echo "  1. Run: ${BLUE}doppler configs tokens create patch-gremlin-token --max-age 0${NC}"
+        echo "  1. Run: doppler configs tokens create patch-gremlin-token --max-age 0"
         echo "  2. Copy the token (starts with dp.st.)"
         echo "  OR visit: https://dashboard.doppler.com"
         echo ""
@@ -473,16 +496,23 @@ Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
 // Logging
 Unattended-Upgrade::SyslogEnable "true";
 Unattended-Upgrade::SyslogFacility "daemon";
-Unattended-Upgrade::Verbose "false";
+Unattended-Upgrade::Verbose "${VERBOSE_LOGGING}";
 EOF
 
     # Create auto-upgrades configuration - always enable, schedule controlled by timer
-    cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+    # Verbose level: 0=quiet, 1=some, 2=debug
+    if [[ "$VERBOSE_LOGGING" == "true" ]]; then
+        PERIODIC_VERBOSE="2"
+    else
+        PERIODIC_VERBOSE="0"
+    fi
+    
+    cat > /etc/apt/apt.conf.d/20auto-upgrades << EOF
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Download-Upgradeable-Packages "1";
 APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";
-APT::Periodic::Verbose "0";
+APT::Periodic::Verbose "$PERIODIC_VERBOSE";
 EOF
 
     # Configure apt-daily-upgrade.timer to run at specific time
@@ -940,6 +970,7 @@ echo "• Logs are available via: journalctl -t patch-gremlin"
 echo ""
 echo -e "\033[0;34mQuick commands:\033[0m"
 echo "• Test notification: sudo /usr/local/bin/update-notifier.sh"
-echo "• Check health: sudo /usr/local/bin/patch-gremlin-health-check.sh"
+echo "• Diagnose configuration: sudo $SCRIPT_DIR/diagnose-config.sh"
+echo "• Run full test suite: sudo $SCRIPT_DIR/test-deployment.sh"
 echo "• View logs: sudo journalctl -t patch-gremlin --since '1 day ago'"
 echo "• Check timer: sudo systemctl list-timers update-notifier*"
