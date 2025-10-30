@@ -85,6 +85,11 @@ echo ""
 echo -e "${BLUE}═══ Test 2: Secret Storage Mode ═══${NC}"
 test2_pass=true
 
+# Debug: Show what we're checking
+echo "Checking for secret storage configuration..."
+echo "  - Looking for: /etc/update-notifier/secrets.conf"
+echo "  - Looking for: DOPPLER_TOKEN in systemd service"
+
 # Check which mode is configured
 if [[ -f /etc/update-notifier/secrets.conf ]]; then
     echo -e "${GREEN}✓${NC} Local mode: /etc/update-notifier/secrets.conf exists"
@@ -131,7 +136,7 @@ if [[ -f /etc/update-notifier/secrets.conf ]]; then
         echo -e "${GREEN}✓${NC} $webhook_count platform(s) configured"
     fi
     
-elif systemctl show update-notifier.service | grep -q "DOPPLER_TOKEN="; then
+elif systemctl show update-notifier.service 2>&1 | grep -q "DOPPLER_TOKEN="; then
     echo -e "${GREEN}✓${NC} Doppler mode: Token configured in systemd"
     SECRET_MODE="doppler"
     
@@ -144,7 +149,7 @@ elif systemctl show update-notifier.service | grep -q "DOPPLER_TOKEN="; then
     fi
     
     # Verify service has token
-    if systemctl show update-notifier.service | grep -q "DOPPLER_TOKEN=dp.st."; then
+    if systemctl show update-notifier.service 2>&1 | grep -q "DOPPLER_TOKEN=dp.st."; then
         echo -e "${GREEN}✓${NC} Valid Doppler service token format in systemd"
     else
         echo -e "${RED}✗${NC} Invalid or missing Doppler token in systemd service"
@@ -154,6 +159,10 @@ elif systemctl show update-notifier.service | grep -q "DOPPLER_TOKEN="; then
 else
     echo -e "${RED}✗${NC} Cannot determine secret storage mode"
     echo "   Neither /etc/update-notifier/secrets.conf nor systemd DOPPLER_TOKEN found"
+    echo ""
+    echo "   Debug: Checking systemd service..."
+    systemctl show update-notifier.service 2>&1 | grep "Environment=" | head -3
+    echo ""
     echo "   Re-run setup: sudo ./setup-unattended-upgrades.sh"
     SECRET_MODE="unknown"
     test2_pass=false
