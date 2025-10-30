@@ -473,7 +473,7 @@ Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
 // Logging
 Unattended-Upgrade::SyslogEnable "true";
 Unattended-Upgrade::SyslogFacility "daemon";
-Unattended-Upgrade::Verbose "true";
+Unattended-Upgrade::Verbose "false";
 EOF
 
     # Create auto-upgrades configuration - always enable, schedule controlled by timer
@@ -482,7 +482,7 @@ APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Download-Upgradeable-Packages "1";
 APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";
-APT::Periodic::Verbose "2";
+APT::Periodic::Verbose "0";
 EOF
 
     # Configure apt-daily-upgrade.timer to run at specific time
