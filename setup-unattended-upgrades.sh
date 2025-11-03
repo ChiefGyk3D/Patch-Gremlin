@@ -659,6 +659,41 @@ echo -e "\033[0;32m✓ OS detected: $OS_ID $OS_VERSION (type: $OS_TYPE)\033[0m"
 
 # Check if Doppler is configured (only if using Doppler mode)
 if [[ "$SECRET_MODE" == "doppler" ]]; then
+    # First check if Doppler CLI is installed
+    if ! command -v doppler &>/dev/null; then
+        echo -e "${RED}Error: Doppler CLI is not installed${NC}"
+        echo ""
+        echo "Installing Doppler CLI..."
+        
+        if [[ "$OS_TYPE" == "debian" ]]; then
+            # Debian/Ubuntu installation
+            sudo apt-get update && sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
+            curl -sLf --retry 3 --tlsv1.2 --proto "=https" 'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' | sudo gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg
+            echo "deb [signed-by=/usr/share/keyrings/doppler-archive-keyring.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | sudo tee /etc/apt/sources.list.d/doppler-cli.list
+            sudo apt-get update && sudo apt-get install -y doppler
+        elif [[ "$OS_TYPE" == "rhel" ]]; then
+            # RHEL/Rocky/Fedora installation
+            sudo rpm --import 'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key'
+            curl -sLf --retry 3 --tlsv1.2 --proto "=https" 'https://packages.doppler.com/public/cli/config.rpm.txt' | sudo tee /etc/yum.repos.d/doppler-cli.repo
+            sudo yum install -y doppler || sudo dnf install -y doppler
+        fi
+        
+        # Verify installation
+        if ! command -v doppler &>/dev/null; then
+            echo -e "${RED}Failed to install Doppler CLI${NC}"
+            echo ""
+            echo "Please install manually: https://docs.doppler.com/docs/install-cli"
+            echo ""
+            echo -e "${YELLOW}Note: Doppler CLI is only needed for initial setup and troubleshooting.${NC}"
+            echo -e "${YELLOW}The service will work with just the token embedded in systemd.${NC}"
+            exit 1
+        fi
+        
+        echo -e "${GREEN}✓ Doppler CLI installed successfully${NC}"
+        echo ""
+    fi
+    
+    # Check if Doppler is configured for root user
     if ! doppler configure get project &>/dev/null; then
         echo -e "${YELLOW}Warning: Doppler is not configured for the root user${NC}"
         echo ""
