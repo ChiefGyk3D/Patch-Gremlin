@@ -360,9 +360,9 @@ else
     if [[ "$OS_TYPE" == "debian" ]]; then
         # Look for the most recent "Packages that will be upgraded" section
         if grep -q "Packages that will be upgraded" "$TEMP_LOG" 2>/dev/null; then
-            # Get the last occurrence and extract package names
-            UPGRADED_PACKAGE_NAMES=$(tac "$TEMP_LOG" | awk '/Packages that will be upgraded/{flag=1; next} flag{if(/^$/ || /INFO/ || /DEBUG/ || /WARNING/) exit; print}' | tac | tr -s ' ' '\n' | grep -v '^$' | head -n 20 | tr '\n' ', ' | sed 's/, $//')
-            PACKAGE_COUNT=$(echo "$UPGRADED_PACKAGE_NAMES" | tr ',' '\n' | grep -v '^$' | wc -l)
+            # Get the last occurrence and extract package names (use || true to avoid pipefail issues)
+            UPGRADED_PACKAGE_NAMES=$(tac "$TEMP_LOG" | awk '/Packages that will be upgraded/{flag=1; next} flag{if(/^$/ || /INFO/ || /DEBUG/ || /WARNING/) exit; print}' | tac | tr -s ' ' '\n' | grep -v '^$' | head -n 20 | tr '\n' ', ' | sed 's/, $//' || true)
+            PACKAGE_COUNT=$(echo "$UPGRADED_PACKAGE_NAMES" | tr ',' '\n' | grep -c '[^[:space:]]' || echo "0")
             if [[ $PACKAGE_COUNT -gt 0 ]]; then
                 HUMAN_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded\n   Packages: ${UPGRADED_PACKAGE_NAMES}"
             fi
@@ -374,9 +374,9 @@ else
     else
         # RHEL/Fedora
         if grep -q "Upgraded:" "$TEMP_LOG" 2>/dev/null; then
-            # Extract upgraded package names
-            UPGRADED_PACKAGE_NAMES=$(grep -A 20 "Upgraded:" "$TEMP_LOG" | tail -1 | grep -oE "[a-zA-Z0-9_+-]+" | head -n 20 | tr '\n' ', ' | sed 's/, $//')
-            PACKAGE_COUNT=$(echo "$UPGRADED_PACKAGE_NAMES" | tr ',' '\n' | grep -v '^$' | wc -l)
+            # Extract upgraded package names (use || true to avoid pipefail issues)
+            UPGRADED_PACKAGE_NAMES=$(grep -A 20 "Upgraded:" "$TEMP_LOG" | tail -1 | grep -oE "[a-zA-Z0-9_+-]+" | head -n 20 | tr '\n' ', ' | sed 's/, $//' || true)
+            PACKAGE_COUNT=$(echo "$UPGRADED_PACKAGE_NAMES" | tr ',' '\n' | grep -c '[^[:space:]]' || echo "0")
             if [[ $PACKAGE_COUNT -gt 0 ]]; then
                 HUMAN_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded\n   Packages: ${UPGRADED_PACKAGE_NAMES}"
             fi
@@ -621,9 +621,9 @@ if [[ "$MATRIX_CONFIGURED" == true ]]; then
     if [[ "$OS_TYPE" == "debian" ]]; then
         # Look for the most recent "Packages that will be upgraded" section
         if grep -q "Packages that will be upgraded" "$TEMP_LOG" 2>/dev/null; then
-            # Get the last occurrence and extract package names
-            MATRIX_UPGRADED_PACKAGES=$(tac "$TEMP_LOG" | awk '/Packages that will be upgraded/{flag=1; next} flag{if(/^$/ || /INFO/ || /DEBUG/ || /WARNING/) exit; print}' | tac | tr -s ' ' '\n' | grep -v '^$' | head -n 20 | tr '\n' ', ' | sed 's/, $//')
-            PACKAGE_COUNT=$(echo "$MATRIX_UPGRADED_PACKAGES" | tr ',' '\n' | grep -v '^$' | wc -l)
+            # Get the last occurrence and extract package names (use || true to avoid pipefail issues)
+            MATRIX_UPGRADED_PACKAGES=$(tac "$TEMP_LOG" | awk '/Packages that will be upgraded/{flag=1; next} flag{if(/^$/ || /INFO/ || /DEBUG/ || /WARNING/) exit; print}' | tac | tr -s ' ' '\n' | grep -v '^$' | head -n 20 | tr '\n' ', ' | sed 's/, $//' || true)
+            PACKAGE_COUNT=$(echo "$MATRIX_UPGRADED_PACKAGES" | tr ',' '\n' | grep -c '[^[:space:]]' || echo "0")
             if [[ $PACKAGE_COUNT -gt 0 ]]; then
                 MATRIX_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded\n   Packages: ${MATRIX_UPGRADED_PACKAGES}"
             fi
@@ -635,9 +635,9 @@ if [[ "$MATRIX_CONFIGURED" == true ]]; then
     else
         # RHEL/Fedora
         if grep -q "Upgraded:" "$TEMP_LOG" 2>/dev/null; then
-            # Extract upgraded package names
-            MATRIX_UPGRADED_PACKAGES=$(grep -A 20 "Upgraded:" "$TEMP_LOG" | tail -1 | grep -oE "[a-zA-Z0-9_+-]+" | head -n 20 | tr '\n' ', ' | sed 's/, $//')
-            PACKAGE_COUNT=$(echo "$MATRIX_UPGRADED_PACKAGES" | tr ',' '\n' | grep -v '^$' | wc -l)
+            # Extract upgraded package names (use || true to avoid pipefail issues)
+            MATRIX_UPGRADED_PACKAGES=$(grep -A 20 "Upgraded:" "$TEMP_LOG" | tail -1 | grep -oE "[a-zA-Z0-9_+-]+" | head -n 20 | tr '\n' ', ' | sed 's/, $//' || true)
+            PACKAGE_COUNT=$(echo "$MATRIX_UPGRADED_PACKAGES" | tr ',' '\n' | grep -c '[^[:space:]]' || echo "0")
             if [[ $PACKAGE_COUNT -gt 0 ]]; then
                 MATRIX_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded\n   Packages: ${MATRIX_UPGRADED_PACKAGES}"
             fi
