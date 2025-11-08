@@ -291,13 +291,13 @@ else
     
     # Analyze what happened based on OS type with robust pattern matching
     if [[ "$OS_TYPE" == "debian" ]]; then
-        # Debian/Ubuntu - check for actual package installations
+        # Debian/Ubuntu - check for actual package installations in the MOST RECENT run only
         if echo "$RECENT_LOG" | grep -qE "(Packages that will be upgraded|The following packages will be upgraded):"; then
-            # Count actual package lines with multiple patterns
-            UPGRADED_PACKAGES=$(echo "$RECENT_LOG" | grep -A 50 -E "(Packages that will be upgraded|The following packages will be upgraded):" | grep -E "^  [a-zA-Z0-9][a-zA-Z0-9+.-]*|^[a-zA-Z0-9][a-zA-Z0-9+.-]*" | wc -l)
-            if [[ $UPGRADED_PACKAGES -gt 0 ]]; then
+            # Extract from MOST RECENT occurrence only to avoid cumulative counting
+            RECENT_UPGRADED=$(tac "$TEMP_LOG" | awk '/Packages that will be upgraded/{flag=1; next} flag{if(/^$/ || /INFO/ || /DEBUG/ || /WARNING/) exit; print}' | tac | tr -s ' ' '\n' | grep -v '^$' | wc -l || echo "0")
+            if [[ $RECENT_UPGRADED -gt 0 ]]; then
                 UPDATE_STATUS="updated"
-                UPDATE_SUMMARY="$UPGRADED_PACKAGES package(s) updated"
+                UPDATE_SUMMARY="$RECENT_UPGRADED package(s) updated"
             else
                 UPDATE_STATUS="no-updates"
                 UPDATE_SUMMARY="No updates available"
@@ -433,6 +433,14 @@ else
     })
     
     log "INFO: Detected OS: $OS_TYPE, Status: $UPDATE_STATUS, Summary: $UPDATE_SUMMARY"
+fi
+
+# Override status if no actual upgrades found but available updates exist
+# This prevents showing "System Updates Applied" when only checking for updates
+if [[ "$UPDATE_STATUS" == "updated" ]] && [[ -z "$UPGRADED_PACKAGE_NAMES" ]] && [[ "$AVAILABLE_UPDATES" -gt 0 ]]; then
+    UPDATE_STATUS="no-updates"
+    UPDATE_SUMMARY="No updates applied"
+    log "INFO: Corrected status - no packages were actually upgraded this run"
 fi
 
 # Set notification title and description based on status
