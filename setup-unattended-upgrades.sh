@@ -13,6 +13,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Get script directory (needed early for update-scripts-only option)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 # Pre-installation checks
 echo -e "\033[0;34m=== Patch Gremlin Setup ===\033[0m"
 echo "Performing pre-installation checks..."
@@ -330,7 +333,6 @@ fi
 echo ""
 
 # Load configuration from file if it exists with enhanced validation
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 load_config_safely() {
     local config_file="$1"
     echo "Loading configuration from $config_file"
