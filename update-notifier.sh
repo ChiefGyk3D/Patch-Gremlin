@@ -354,12 +354,40 @@ else
     
     # Create human-readable summary from logs
     HUMAN_SUMMARY=""
+    UPGRADED_PACKAGE_NAMES=""
     
-    # Check for updates available/applied
-    if grep -q "packages upgraded" "$TEMP_LOG" 2>/dev/null; then
-        PACKAGE_COUNT=$(grep "packages upgraded" "$TEMP_LOG" | tail -n 1 | awk '{print $1}')
-        HUMAN_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded"
-    elif [[ "$AVAILABLE_UPDATES" -gt 0 ]]; then
+    # Check for updates available/applied - extract from most recent run only
+    if [[ "$OS_TYPE" == "debian" ]]; then
+        # Look for the most recent "Packages that will be upgraded" section
+        if grep -q "Packages that will be upgraded" "$TEMP_LOG" 2>/dev/null; then
+            # Get the last occurrence and extract package names
+            UPGRADED_PACKAGE_NAMES=$(tac "$TEMP_LOG" | awk '/Packages that will be upgraded/{flag=1; next} flag{if(/^$/ || /INFO/ || /DEBUG/ || /WARNING/) exit; print}' | tac | tr -s ' ' '\n' | grep -v '^$' | head -n 20 | tr '\n' ', ' | sed 's/, $//')
+            PACKAGE_COUNT=$(echo "$UPGRADED_PACKAGE_NAMES" | tr ',' '\n' | grep -v '^$' | wc -l)
+            if [[ $PACKAGE_COUNT -gt 0 ]]; then
+                HUMAN_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded\n   Packages: ${UPGRADED_PACKAGE_NAMES}"
+            fi
+        elif grep -q "packages upgraded" "$TEMP_LOG" 2>/dev/null; then
+            # Fallback to simple count if package names not found
+            PACKAGE_COUNT=$(grep "packages upgraded" "$TEMP_LOG" | tail -n 1 | awk '{print $1}')
+            HUMAN_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded"
+        fi
+    else
+        # RHEL/Fedora
+        if grep -q "Upgraded:" "$TEMP_LOG" 2>/dev/null; then
+            # Extract upgraded package names
+            UPGRADED_PACKAGE_NAMES=$(grep -A 20 "Upgraded:" "$TEMP_LOG" | tail -1 | grep -oE "[a-zA-Z0-9_+-]+" | head -n 20 | tr '\n' ', ' | sed 's/, $//')
+            PACKAGE_COUNT=$(echo "$UPGRADED_PACKAGE_NAMES" | tr ',' '\n' | grep -v '^$' | wc -l)
+            if [[ $PACKAGE_COUNT -gt 0 ]]; then
+                HUMAN_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded\n   Packages: ${UPGRADED_PACKAGE_NAMES}"
+            fi
+        elif grep -q "packages upgraded" "$TEMP_LOG" 2>/dev/null; then
+            PACKAGE_COUNT=$(grep "packages upgraded" "$TEMP_LOG" | tail -n 1 | awk '{print $1}')
+            HUMAN_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded"
+        fi
+    fi
+    
+    # If no upgrades detected, check for available updates
+    if [[ -z "$HUMAN_SUMMARY" ]] && [[ "$AVAILABLE_UPDATES" -gt 0 ]]; then
         HUMAN_SUMMARY="📦 Updates Available: ${AVAILABLE_UPDATES} non-security packages\n   Packages: ${AVAILABLE_PACKAGES}"
         if [[ "$AVAILABLE_UPDATES" -gt 10 ]]; then
             HUMAN_SUMMARY="${HUMAN_SUMMARY}... and $((AVAILABLE_UPDATES - 10)) more"
@@ -585,19 +613,47 @@ fi
 if [[ "$MATRIX_CONFIGURED" == true ]]; then
     log "INFO: Sending notification to Matrix..."
     
-    # Create human-readable summary for Matrix (reuse the same logic)
+    # Create human-readable summary for Matrix (reuse the same extraction logic)
     MATRIX_SUMMARY=""
+    MATRIX_UPGRADED_PACKAGES=""
     
-    # Check for updates available/applied
-    if grep -q "packages upgraded" "$TEMP_LOG" 2>/dev/null; then
-        PACKAGE_COUNT=$(grep "packages upgraded" "$TEMP_LOG" | tail -n 1 | awk '{print $1}')
-        MATRIX_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded"
-    elif [[ "$AVAILABLE_UPDATES" -gt 0 ]]; then
+    # Check for updates available/applied - extract from most recent run only
+    if [[ "$OS_TYPE" == "debian" ]]; then
+        # Look for the most recent "Packages that will be upgraded" section
+        if grep -q "Packages that will be upgraded" "$TEMP_LOG" 2>/dev/null; then
+            # Get the last occurrence and extract package names
+            MATRIX_UPGRADED_PACKAGES=$(tac "$TEMP_LOG" | awk '/Packages that will be upgraded/{flag=1; next} flag{if(/^$/ || /INFO/ || /DEBUG/ || /WARNING/) exit; print}' | tac | tr -s ' ' '\n' | grep -v '^$' | head -n 20 | tr '\n' ', ' | sed 's/, $//')
+            PACKAGE_COUNT=$(echo "$MATRIX_UPGRADED_PACKAGES" | tr ',' '\n' | grep -v '^$' | wc -l)
+            if [[ $PACKAGE_COUNT -gt 0 ]]; then
+                MATRIX_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded\n   Packages: ${MATRIX_UPGRADED_PACKAGES}"
+            fi
+        elif grep -q "packages upgraded" "$TEMP_LOG" 2>/dev/null; then
+            # Fallback to simple count if package names not found
+            PACKAGE_COUNT=$(grep "packages upgraded" "$TEMP_LOG" | tail -n 1 | awk '{print $1}')
+            MATRIX_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded"
+        fi
+    else
+        # RHEL/Fedora
+        if grep -q "Upgraded:" "$TEMP_LOG" 2>/dev/null; then
+            # Extract upgraded package names
+            MATRIX_UPGRADED_PACKAGES=$(grep -A 20 "Upgraded:" "$TEMP_LOG" | tail -1 | grep -oE "[a-zA-Z0-9_+-]+" | head -n 20 | tr '\n' ', ' | sed 's/, $//')
+            PACKAGE_COUNT=$(echo "$MATRIX_UPGRADED_PACKAGES" | tr ',' '\n' | grep -v '^$' | wc -l)
+            if [[ $PACKAGE_COUNT -gt 0 ]]; then
+                MATRIX_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded\n   Packages: ${MATRIX_UPGRADED_PACKAGES}"
+            fi
+        elif grep -q "packages upgraded" "$TEMP_LOG" 2>/dev/null; then
+            PACKAGE_COUNT=$(grep "packages upgraded" "$TEMP_LOG" | tail -n 1 | awk '{print $1}')
+            MATRIX_SUMMARY="✅ Updates Applied: ${PACKAGE_COUNT} packages upgraded"
+        fi
+    fi
+    
+    # If no upgrades detected, check for available updates
+    if [[ -z "$MATRIX_SUMMARY" ]] && [[ "$AVAILABLE_UPDATES" -gt 0 ]]; then
         MATRIX_SUMMARY="📦 Updates Available: ${AVAILABLE_UPDATES} non-security packages\n   Packages: ${AVAILABLE_PACKAGES}"
         if [[ "$AVAILABLE_UPDATES" -gt 10 ]]; then
             MATRIX_SUMMARY="${MATRIX_SUMMARY}... and $((AVAILABLE_UPDATES - 10)) more"
         fi
-    elif grep -q "No packages found that can be upgraded" "$TEMP_LOG" 2>/dev/null; then
+    elif [[ -z "$MATRIX_SUMMARY" ]] && grep -q "No packages found that can be upgraded" "$TEMP_LOG" 2>/dev/null; then
         MATRIX_SUMMARY="✅ System Status: No updates available"
     fi
     
