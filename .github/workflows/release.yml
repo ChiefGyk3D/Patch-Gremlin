@@ -1,0 +1,102 @@
+name: Release Management
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          echo "## What's Changed" > CHANGELOG.txt
+          git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"- %s (%h)" >> CHANGELOG.txt
+          cat CHANGELOG.txt
+
+      - name: Create Release Archive
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          tar -czf patch-gremlin-${VERSION}.tar.gz \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='*.tar.gz' \
+            .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: CHANGELOG.txt
+          files: patch-gremlin-*.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  validate-release:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify all required files exist
+        run: |
+          echo "=== Verifying Release Contents ==="
+          required_files=(
+            "setup-unattended-upgrades.sh"
+            "update-notifier.sh"
+            "uninstall.sh"
+            "config.example.sh"
+            "README.md"
+            "test-deployment.sh"
+            "diagnose-config.sh"
+            "health-check.sh"
+            "configure-verbosity.sh"
+            "fix-verbose-now.sh"
+          )
+          
+          for file in "${required_files[@]}"; do
+            if [ -f "$file" ]; then
+              echo "✓ Found: $file"
+            else
+              echo "✗ Missing: $file"
+              exit 1
+            fi
+          done
+
+      - name: Verify script executability
+        run: |
+          echo "=== Checking Script Permissions ==="
+          for script in setup-unattended-upgrades.sh update-notifier.sh uninstall.sh; do
+            if [ -x "$script" ]; then
+              echo "✓ Executable: $script"
+            else
+              echo "⚠️  Making executable: $script"
+              chmod +x "$script"
+            fi
+          done
+
+      - name: Generate release notes
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "# Patch Gremlin $VERSION" > RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+          echo "## Installation" >> RELEASE_NOTES.md
+          echo '```bash' >> RELEASE_NOTES.md
+          echo "curl -sL https://github.com/ChiefGyk3D/Patch-Gremlin/archive/${VERSION}.tar.gz | tar xz" >> RELEASE_NOTES.md
+          echo "cd Patch-Gremlin-${VERSION#v}" >> RELEASE_NOTES.md
+          echo "sudo -E bash setup-unattended-upgrades.sh" >> RELEASE_NOTES.md
+          echo '```' >> RELEASE_NOTES.md
+          cat RELEASE_NOTES.md

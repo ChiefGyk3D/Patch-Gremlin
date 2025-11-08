@@ -1,0 +1,61 @@
+name: Documentation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**.md'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.md'
+
+jobs:
+  check-links:
+    name: Check Markdown Links
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check links in markdown files
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: 'yes'
+          config-file: '.markdown-link-check.json'
+
+  documentation-quality:
+    name: Documentation Quality Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for required documentation
+        run: |
+          echo "=== Checking Required Documentation ==="
+          required_docs=(
+            "README.md"
+            "TESTING-GUIDE.md"
+            "TROUBLESHOOTING.md"
+          )
+          
+          for doc in "${required_docs[@]}"; do
+            if [ -f "$doc" ]; then
+              echo "✓ Found: $doc"
+              lines=$(wc -l < "$doc")
+              echo "  Lines: $lines"
+            else
+              echo "✗ Missing: $doc"
+              exit 1
+            fi
+          done
+
+      - name: Check documentation freshness
+        run: |
+          echo "=== Documentation Last Updated ==="
+          for doc in *.md; do
+            [ -f "$doc" ] || continue
+            last_modified=$(git log -1 --format="%ai" -- "$doc" 2>/dev/null || echo "N/A")
+            echo "$doc: $last_modified"
+          done

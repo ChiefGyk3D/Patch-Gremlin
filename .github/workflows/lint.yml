@@ -1,0 +1,86 @@
+name: Linting and Code Quality
+
+on:
+  push:
+    branches: [ main, develop, doppler_setup_fix ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  shellcheck:
+    name: Shell Script Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run ShellCheck on all scripts
+        run: |
+          find . -name "*.sh" -not -path "./.git/*" | while read -r script; do
+            echo "Checking: $script"
+            shellcheck -x -S warning "$script" || exit 1
+          done
+
+  markdown-lint:
+    name: Markdown Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Lint Markdown files
+        uses: DavidAnson/markdownlint-cli2-action@v15
+        with:
+          globs: '**/*.md'
+
+  yaml-lint:
+    name: YAML Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Lint YAML files
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          file_or_dir: .github/workflows
+          config_file: .yamllint.yml
+          strict: true
+
+  bash-syntax:
+    name: Bash Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check Bash syntax
+        run: |
+          echo "Checking bash syntax for all .sh files..."
+          find . -name "*.sh" -not -path "./.git/*" | while read -r script; do
+            echo "Syntax check: $script"
+            bash -n "$script" || exit 1
+          done
+
+  code-quality:
+    name: Code Quality Report
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate code quality metrics
+        run: |
+          echo "=== Code Quality Metrics ==="
+          echo "Total shell scripts: $(find . -name '*.sh' -not -path './.git/*' | wc -l)"
+          echo "Total lines of code: $(find . -name '*.sh' -not -path './.git/*' -exec cat {} \; | wc -l)"
+          echo "Total markdown files: $(find . -name '*.md' | wc -l)"
+          echo ""
+          echo "=== Script Permissions Check ==="
+          find . -name '*.sh' -not -path './.git/*' | while read -r script; do
+            if [ ! -x "$script" ]; then
+              echo "⚠️  Not executable: $script"
+            else
+              echo "✓ Executable: $script"
+            fi
+          done
