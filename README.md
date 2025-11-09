@@ -641,7 +641,6 @@ contributions under the same dual license (MPL-2.0 / Commercial).
 
 ### Community Channels
 
-- **[GitHub Discussions](https://github.com/ChiefGyk3D/Patch-Gremlin/discussions)** - Ask questions, share setups
 - **[GitHub Issues](https://github.com/ChiefGyk3D/Patch-Gremlin/issues)** - Bug reports and feature requests
 - **[Discord Server](https://discord.chiefgyk3d.com)** - Real-time chat and support
 - **[Matrix Space](https://matrix-invite.chiefgyk3d.com)** - Federated chat alternative
