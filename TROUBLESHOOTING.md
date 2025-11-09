@@ -7,6 +7,7 @@
 **Symptom**: Script shows default secret names instead of your custom names
 
 **Solution**:
+
 ```bash
 # Ensure config exists
 ls -la /etc/update-notifier/config.sh
@@ -17,13 +18,14 @@ sudo chmod 644 /etc/update-notifier/config.sh
 
 # Test
 sudo /usr/local/bin/update-notifier.sh
-```
+```text
 
 ### 2. Doppler Authentication Failed
 
 **Symptom**: `Error: No notification methods configured in Doppler`
 
 **Solution**:
+
 ```bash
 # Re-authenticate as root
 sudo doppler login
@@ -34,7 +36,7 @@ sudo doppler setup --project your-project --config your-config
 # Verify
 sudo doppler me
 sudo doppler secrets
-```
+```text
 
 **Note**: Root and regular users have separate Doppler authentication.
 
@@ -43,6 +45,7 @@ sudo doppler secrets
 **Symptom**: `sudo: unable to resolve host streamer-daemon: Name or service not known`
 
 **Solution**:
+
 ```bash
 # Edit /etc/hosts
 sudo nano /etc/hosts
@@ -52,18 +55,20 @@ sudo nano /etc/hosts
 
 # Verify
 hostname
-```
+```text
 
 ### 4. Matrix Login Failed
 
 **Symptom**: `Failed to login to Matrix - Invalid username or password`
 
 **Causes**:
+
 1. Wrong username format
 2. Incorrect password
 3. Wrong homeserver URL
 
 **Solution**:
+
 ```bash
 # Check username format (should be just "username", not "@username:server")
 sudo doppler secrets get MATRIX_USERNAME --plain
@@ -76,7 +81,7 @@ sudo doppler secrets get MATRIX_HOMESERVER --plain
 
 # Verify password
 sudo doppler secrets get MATRIX_PASSWORD --plain
-```
+```text
 
 ### 5. Discord Invalid JSON Error
 
@@ -85,10 +90,11 @@ sudo doppler secrets get MATRIX_PASSWORD --plain
 **Cause**: Special characters in log output breaking JSON format
 
 **Solution**: This is now fixed in the latest version. Update your script:
+
 ```bash
 sudo cp ~/src/scripts/update-notifier.sh /usr/local/bin/update-notifier.sh
 sudo chmod +x /usr/local/bin/update-notifier.sh
-```
+```text
 
 ### 6. No Security Updates Available
 
@@ -97,9 +103,10 @@ sudo chmod +x /usr/local/bin/update-notifier.sh
 **This is normal!** It means your system is up to date.
 
 **Test with dry-run**:
+
 ```bash
 sudo unattended-upgrade --dry-run --debug
-```
+```text
 
 Look for: `pkgs that look like they should be upgraded:`
 
@@ -110,15 +117,17 @@ Look for: `pkgs that look like they should be upgraded:`
 **Cause**: Environment variables don't transfer over SSH
 
 **Solution**: The script now auto-loads from `/etc/update-notifier/config.sh`. Ensure it exists:
+
 ```bash
 sudo cp ~/src/scripts/config.sh /etc/update-notifier/config.sh
-```
+```text
 
 ### 8. Permission Denied
 
 **Symptom**: Permission errors when running scripts
 
 **Solution**:
+
 ```bash
 # Make scripts executable
 chmod +x setup-unattended-upgrades.sh
@@ -127,7 +136,7 @@ chmod +x uninstall.sh
 
 # Notification script needs root
 sudo chmod +x /usr/local/bin/update-notifier.sh
-```
+```text
 
 ## Verification Commands
 
@@ -151,7 +160,7 @@ sudo systemctl status update-notifier.timer
 # 6. View logs
 sudo journalctl -u update-notifier.service -n 50
 tail -f /var/log/unattended-upgrades/unattended-upgrades.log
-```
+```text
 
 ## Debug Mode
 
@@ -166,7 +175,7 @@ set -x  # Enable debug mode
 
 # Run and see detailed output
 sudo /usr/local/bin/update-notifier.sh
-```
+```text
 
 ## Reset Everything
 
@@ -188,7 +197,7 @@ nano config.sh
 
 # 5. Reinstall
 sudo ./setup-unattended-upgrades.sh
-```
+```text
 
 ## Getting Help
 

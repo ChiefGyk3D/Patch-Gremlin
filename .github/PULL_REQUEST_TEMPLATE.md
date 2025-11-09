@@ -20,16 +20,19 @@ Closes #
 Related to #
 
 ## Changes Made
+
 <!-- List the specific changes made in this PR -->
 
-- 
-- 
-- 
+-
+-
+-
 
 ## Testing Performed
+
 <!-- Describe the tests you ran and their results -->
 
 ### Manual Testing
+
 - [ ] Tested on Debian/Ubuntu
 - [ ] Tested on RHEL/Rocky/Fedora
 - [ ] Tested with LOCAL secrets mode
@@ -37,12 +40,14 @@ Related to #
 - [ ] Verified notifications work (Discord/Matrix/Teams/Slack)
 
 ### Test Commands Run
+
 ```bash
 # List commands you ran to test
 ```
 
 ### Test Results
-```
+
+```text
 # Paste relevant test output
 ```
 
