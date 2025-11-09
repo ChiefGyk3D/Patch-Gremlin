@@ -1,0 +1,105 @@
+name: Testing
+
+on:
+  push:
+    branches: [main, develop, doppler_setup_fix]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os-type: [debian, rhel]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up test environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck curl jq
+
+      - name: Run script validation tests
+        run: |
+          echo "=== Testing Script Syntax ==="
+          for script in *.sh; do
+            [ -f "$script" ] || continue
+            echo "Testing: $script"
+            bash -n "$script"
+          done
+
+      - name: Test update-notifier.sh functions
+        run: |
+          echo "=== Testing update-notifier.sh ==="
+          # Test syntax only (sourcing requires environment setup)
+          bash -n update-notifier.sh
+
+      - name: Test configuration validation
+        run: |
+          echo "=== Testing Configuration Validation ==="
+          # Test config.example.sh syntax
+          bash -n config.example.sh
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up test environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unattended-upgrades apt-listchanges systemd curl
+
+      - name: Test deployment script (dry-run)
+        run: |
+          echo "=== Testing Deployment Validation ==="
+          # Test that test-deployment.sh can be parsed
+          bash -n test-deployment.sh
+
+      - name: Test diagnostic scripts
+        run: |
+          echo "=== Testing Diagnostic Scripts ==="
+          bash -n diagnose-config.sh
+          bash -n health-check.sh
+          bash -n configure-verbosity.sh
+
+  compatibility-tests:
+    name: OS Compatibility Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        container:
+          - debian:13
+          - debian:12
+          - ubuntu:22.04
+          - ubuntu:24.04
+    container:
+      image: ${{ matrix.container }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y bash curl sudo
+
+      - name: Test OS detection
+        run: |
+          echo "=== Testing OS Detection ==="
+          if [ -f /etc/os-release ]; then
+            . /etc/os-release
+            echo "Detected: $ID $VERSION_ID"
+          fi
+
+      - name: Validate script compatibility
+        run: |
+          echo "=== Validating Script Syntax ==="
+          bash -n setup-unattended-upgrades.sh
+          bash -n update-notifier.sh
+          bash -n uninstall.sh

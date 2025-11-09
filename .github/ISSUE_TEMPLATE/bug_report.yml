@@ -1,0 +1,140 @@
+name: Bug Report
+description: Report a bug or issue with Patch Gremlin
+title: "[BUG] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this bug! Please fill out the
+        information below to help us resolve it quickly.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of the bug
+      placeholder: What went wrong?
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: Describe what should have happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: Describe what actually happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Step-by-step instructions to reproduce the issue
+      placeholder: |
+        1. Run command '...'
+        2. Configure setting '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      description: What OS are you using?
+      options:
+        - Debian 11
+        - Debian 12
+        - Ubuntu 22.04
+        - Ubuntu 24.04
+        - Raspberry Pi OS
+        - Rocky Linux 8
+        - Rocky Linux 9
+        - RHEL 8
+        - RHEL 9
+        - Fedora
+        - Other (specify in description)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: secret-mode
+    attributes:
+      label: Secret Storage Mode
+      description: Which mode are you using?
+      options:
+        - LOCAL (secrets.conf file)
+        - DOPPLER (cloud secrets)
+        - Not applicable
+    validations:
+      required: true
+
+  - type: dropdown
+    id: notification
+    attributes:
+      label: Notification Platform
+      description: Which notification platform(s) are affected?
+      multiple: true
+      options:
+        - Discord
+        - Matrix
+        - Slack
+        - Microsoft Teams
+        - All platforms
+        - Not applicable
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: Paste relevant logs here
+      placeholder: |
+        sudo journalctl -u update-notifier.service -n 50 --no-pager
+        sudo journalctl -t patch-gremlin -n 50 --no-pager
+      render: shell
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration (redacted)
+      description: Share relevant configuration (remove sensitive data!)
+      placeholder: |
+        # Remove all webhooks, tokens, passwords before pasting!
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Patch Gremlin Version
+      description: What version are you running?
+      placeholder: git log -1 --oneline
+
+  - type: checkboxes
+    id: troubleshooting
+    attributes:
+      label: Troubleshooting Steps Attempted
+      description: Which troubleshooting steps have you tried?
+      options:
+        - label: Ran diagnose-config.sh
+        - label: Ran test-deployment.sh
+        - label: Checked service status
+        - label: Reviewed logs
+        - label: Verified configuration
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other information that might help
+      placeholder: Screenshots, additional logs, etc.

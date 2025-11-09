@@ -65,9 +65,7 @@ fi
 echo "Detected OS: $OS_ID $OS_VERSION (type: $OS_TYPE)"
 
 # Check for existing installation
-EXISTING_INSTALL=false
 if [[ -f /usr/local/bin/update-notifier.sh ]] || [[ -f /etc/systemd/system/update-notifier.service ]]; then
-    EXISTING_INSTALL=true
     echo ""
     echo -e "${YELLOW}═══════════════════════════════════════════════════════${NC}"
     echo -e "${YELLOW}    Existing Installation Detected${NC}"

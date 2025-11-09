@@ -3,11 +3,13 @@
 ## Quick Start Testing
 
 ### 1. Run the Automated Test Suite
+
 ```bash
 sudo bash test-deployment.sh
-```
+```text
 
 This will check:
+
 - ✅ Installation completeness
 - ✅ Secret storage configuration
 - ✅ Systemd services status
@@ -34,11 +36,12 @@ cat /etc/apt/apt.conf.d/99patch-gremlin-notification
 
 # RHEL/Rocky - check DNF hook
 cat /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf
-```
+```text
 
 ### Test 2: Check Secret Configuration
 
 **For Local Mode:**
+
 ```bash
 # Verify secrets file exists and has secure permissions
 ls -la /etc/update-notifier/secrets.conf
@@ -46,9 +49,10 @@ ls -la /etc/update-notifier/secrets.conf
 
 # View (as root)
 sudo cat /etc/update-notifier/secrets.conf
-```
+```text
 
 **For Doppler Mode:**
+
 ```bash
 # Check systemd environment has token
 sudo systemctl show update-notifier.service | grep DOPPLER
@@ -58,7 +62,7 @@ sudo -i
 export DOPPLER_TOKEN="your-token-here"
 doppler secrets get SYSTEM_UPDATE_DISCORD
 exit
-```
+```text
 
 ### Test 3: Check Systemd Services
 
@@ -74,7 +78,7 @@ sudo systemctl is-enabled update-notifier.timer
 sudo systemctl list-timers update-notifier.timer
 sudo systemctl list-timers apt-daily-upgrade.timer    # Debian
 sudo systemctl list-timers dnf-automatic.timer        # RHEL
-```
+```text
 
 ### Test 4: Manual Notification Test
 
@@ -89,13 +93,14 @@ sudo systemctl status update-notifier.service
 
 # View detailed logs
 sudo journalctl -u update-notifier.service -n 50 --no-pager
-```
+```text
 
 **Expected Result:** You should receive notification(s) on your configured platform(s) showing current system update status.
 
 ### Test 5: Test Unattended Upgrades
 
 **Debian/Ubuntu:**
+
 ```bash
 # Check for available updates
 sudo apt update
@@ -106,9 +111,10 @@ sudo unattended-upgrades --debug --dry-run
 
 # Force immediate run (careful - this installs updates!)
 sudo unattended-upgrades
-```
+```text
 
 **RHEL/Rocky/Fedora:**
+
 ```bash
 # Check for available updates
 sudo dnf check-update
@@ -118,29 +124,31 @@ sudo dnf-automatic --downloadupdates
 
 # Force immediate run (careful - this installs updates!)
 sudo systemctl start dnf-automatic.service
-```
+```text
 
 ### Test 6: Test APT/DNF Hook
 
 The hook triggers after package installations:
 
 **Debian/Ubuntu:**
+
 ```bash
 # Install a small package to trigger the hook
 sudo apt install vim-tiny
 
 # Check if notification was sent
 sudo journalctl -xe | grep -i patch-gremlin
-```
+```text
 
 **RHEL/Rocky:**
+
 ```bash
 # Install a small package
 sudo dnf install vim-minimal
 
 # Check logs
 sudo journalctl -u dnf-automatic.service -n 20
-```
+```text
 
 ### Test 7: Monitor Logs in Real-Time
 
@@ -156,7 +164,7 @@ sudo journalctl -u dnf-automatic.service -f
 
 # Watch all Patch Gremlin activity
 sudo journalctl -t patch-gremlin -f
-```
+```text
 
 ---
 
@@ -188,7 +196,7 @@ dnf check-update         # RHEL
 sudo systemctl start update-notifier.service
 
 # Check notification - should show available updates
-```
+```text
 
 ### Scenario 2: Test After Installing Updates
 
@@ -200,7 +208,7 @@ sudo dnf upgrade -y      # RHEL
 # Notification should trigger automatically via hook
 # Check logs to confirm
 sudo journalctl -u update-notifier.service -n 20
-```
+```text
 
 ### Scenario 3: Test Timer Execution
 
@@ -210,7 +218,7 @@ sudo systemctl list-timers update-notifier.timer
 
 # Manually trigger timer (advances to next scheduled time)
 sudo systemctl start update-notifier.timer
-```
+```text
 
 ### Scenario 4: Test with No Updates
 
@@ -223,7 +231,7 @@ sudo dnf upgrade -y                       # RHEL
 sudo systemctl start update-notifier.service
 
 # Notification should say "system is up to date"
-```
+```text
 
 ---
 
@@ -232,11 +240,13 @@ sudo systemctl start update-notifier.service
 ### If Notification Doesn't Send
 
 1. **Check service logs:**
+
    ```bash
    sudo journalctl -u update-notifier.service -n 100 --no-pager
    ```
 
-2. **Verify secrets:**
+1. **Verify secrets:**
+
    ```bash
    # Local mode
    sudo cat /etc/update-notifier/secrets.conf
@@ -245,7 +255,8 @@ sudo systemctl start update-notifier.service
    sudo systemctl show update-notifier.service | grep DOPPLER
    ```
 
-3. **Test webhook manually:**
+1. **Test webhook manually:**
+
    ```bash
    # For Discord
    curl -X POST "YOUR_WEBHOOK_URL" \
@@ -253,7 +264,8 @@ sudo systemctl start update-notifier.service
      -d '{"content": "Test from Patch Gremlin"}'
    ```
 
-4. **Run notifier script directly:**
+1. **Run notifier script directly:**
+
    ```bash
    sudo -i
    export SECRET_MODE=local  # or configure DOPPLER_TOKEN
@@ -263,24 +275,28 @@ sudo systemctl start update-notifier.service
 ### If Updates Don't Run
 
 1. **Check update service status:**
+
    ```bash
    sudo systemctl status apt-daily-upgrade.timer    # Debian
    sudo systemctl status dnf-automatic.timer        # RHEL
    ```
 
 2. **Check update service logs:**
+
    ```bash
    sudo journalctl -u unattended-upgrades.service -n 50    # Debian
    sudo journalctl -u dnf-automatic.service -n 50          # RHEL
    ```
 
 3. **Verify configuration:**
+
    ```bash
    # Debian
    cat /etc/apt/apt.conf.d/50unattended-upgrades
    
    # RHEL
    cat /etc/dnf/automatic.conf
+
    ```
 
 ---
@@ -290,47 +306,61 @@ sudo systemctl start update-notifier.service
 ### Test Notification Delivery Time
 
 ```bash
+
 #!/bin/bash
+
 echo "Testing notification delivery speed..."
 start=$(date +%s)
 sudo systemctl start update-notifier.service
+
 # Wait for service to complete
+
 while systemctl is-active update-notifier.service &>/dev/null; do
     sleep 0.5
 done
 end=$(date +%s)
 echo "Notification sent in $((end - start)) seconds"
-```
+
+```text
 
 ### Test Multiple Rapid Notifications
 
 ```bash
+
 # Test 3 rapid notifications
+
 for i in {1..3}; do
     echo "Test $i"
     sudo systemctl start update-notifier.service
     sleep 5
 done
-```
+
+```text
 
 ---
 
 ## Testing on Remote Systems (Raspberry Pi, etc.)
 
 ```bash
+
 # SSH to remote system
+
 ssh user@raspberry-pi
 
 # Pull latest changes
+
 cd /path/to/Patch-Gremlin
 git pull
 
 # Run deployment test
+
 sudo bash test-deployment.sh
 
 # Monitor logs remotely
+
 sudo journalctl -u update-notifier.service -f
-```
+
+```text
 
 ---
 
@@ -339,12 +369,16 @@ sudo journalctl -u update-notifier.service -f
 Create a test cron job to verify regular operation:
 
 ```bash
+
 # Add to crontab (runs every Monday at 10am)
+
 sudo crontab -e
 
 # Add line:
+
 0 10 * * 1 /usr/local/bin/update-notifier.sh
-```
+
+```text
 
 ---
 

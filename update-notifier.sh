@@ -283,7 +283,7 @@ if [[ ! -f "$LOG_FILE" ]]; then
 else
     # Create a snapshot to avoid race conditions with active logging
     TEMP_LOG=$(mktemp)
-    trap "rm -f $TEMP_LOG" EXIT
+    trap 'rm -f "$TEMP_LOG"' EXIT
     cp "$LOG_FILE" "$TEMP_LOG" 2>/dev/null || cat "$LOG_FILE" > "$TEMP_LOG"
     
     # Get recent log entries (configurable amount)
@@ -485,8 +485,8 @@ send_webhook() {
         local response
         response=$(curl -s -w "\n%{http_code}" --max-time "$CURL_TIMEOUT" \
             -H "Content-Type: application/json" -X POST -d "$payload" "$url" 2>/dev/null || echo "\n000")
-        local http_code=$(echo "$response" | tail -n1)
-        local response_body=$(echo "$response" | head -n-1)
+        local http_code
+        http_code=$(echo "$response" | tail -n1)
         
         if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
             log "SUCCESS: Sent notification to $platform (HTTP $http_code)"
@@ -720,7 +720,7 @@ if [[ "$MATRIX_CONFIGURED" == true ]]; then
         
         # Step 1: Login to get access token using temp file to avoid credential exposure
         LOGIN_TEMP=$(mktemp)
-        trap "rm -f $LOGIN_TEMP" EXIT
+        trap 'rm -f "$LOGIN_TEMP"' EXIT
         cat > "$LOGIN_TEMP" <<EOF
 {
   "type": "m.login.password",
@@ -773,7 +773,7 @@ MSGEOF
             
             # Send notification to Matrix using API with temp file
             MATRIX_TEMP=$(mktemp)
-            trap "rm -f $MATRIX_TEMP" EXIT
+            trap 'rm -f "$MATRIX_TEMP"' EXIT
             echo "$MATRIX_PAYLOAD" > "$MATRIX_TEMP"
             
             RESPONSE=$(curl -s -w "\n%{http_code}" \
