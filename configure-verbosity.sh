@@ -28,28 +28,22 @@ echo "Current verbose logging status:"
 if [[ -f /etc/apt/apt.conf.d/50unattended-upgrades ]]; then
     if grep -q 'Unattended-Upgrade::Verbose "true"' /etc/apt/apt.conf.d/50unattended-upgrades; then
         echo -e "  50unattended-upgrades: ${GREEN}ENABLED${NC}"
-        CURRENT_50="true"
     else
         echo -e "  50unattended-upgrades: ${BLUE}DISABLED${NC}"
-        CURRENT_50="false"
     fi
 else
     echo -e "  ${RED}50unattended-upgrades not found${NC}"
-    CURRENT_50="unknown"
 fi
 
 if [[ -f /etc/apt/apt.conf.d/20auto-upgrades ]]; then
     VERBOSE_VAL=$(grep 'APT::Periodic::Verbose' /etc/apt/apt.conf.d/20auto-upgrades | grep -oP '\d+' || echo "0")
     if [[ "$VERBOSE_VAL" == "0" ]]; then
         echo -e "  20auto-upgrades: ${BLUE}DISABLED${NC} (Verbose: $VERBOSE_VAL)"
-        CURRENT_20="false"
     else
         echo -e "  20auto-upgrades: ${GREEN}ENABLED${NC} (Verbose: $VERBOSE_VAL)"
-        CURRENT_20="true"
     fi
 else
     echo -e "  ${RED}20auto-upgrades not found${NC}"
-    CURRENT_20="unknown"
 fi
 
 echo ""

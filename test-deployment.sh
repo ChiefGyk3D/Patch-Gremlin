@@ -25,12 +25,10 @@ fi
 # Detect OS
 if [[ -f /etc/debian_version ]]; then
     OS_TYPE="debian"
-    UPDATE_SERVICE="apt-daily-upgrade.service"
     UPDATE_TIMER="apt-daily-upgrade.timer"
     HOOK_FILE="/etc/apt/apt.conf.d/99patch-gremlin-notification"
 elif [[ -f /etc/redhat-release ]]; then
     OS_TYPE="rhel"
-    UPDATE_SERVICE="dnf-automatic.service"
     UPDATE_TIMER="dnf-automatic.timer"
     HOOK_FILE="/etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf"
 else
