@@ -4,10 +4,10 @@
   <img src="media/patch_gremlin_banner.png" alt="Patch Gremlin Banner" width="400"/>
 </div>
 
-Automated system update notifications for Debian and RHEL-based systems with Discord,
-Microsoft Teams, Slack, and Matrix support. Integrates with `unattended-upgrades`
-(Debian/Ubuntu) or `dnf-automatic` (RHEL/Fedora/Amazon Linux) to send notifications
-when security updates are installed.
+Automated system update notifications for Debian and RHEL-based systems with
+Discord, Microsoft Teams, Slack, and Matrix support. Integrates with
+`unattended-upgrades` (Debian/Ubuntu) or `dnf-automatic` (RHEL/Fedora/Amazon
+Linux) to send notifications when security updates are installed.
 
 ## Features
 
@@ -50,7 +50,7 @@ sudo ./setup-unattended-upgrades.sh
 
 # Done! Test the notification:
 sudo /usr/local/bin/update-notifier.sh
-```text
+```
 
 #### Option 2: Doppler (Centralized Secret Management)
 
@@ -84,7 +84,7 @@ sudo ./setup-unattended-upgrades.sh
 
 # Done! Test the notification:
 sudo /usr/local/bin/update-notifier.sh
-```text
+```
 
 ### Creating a Doppler Service Token
 
@@ -95,7 +95,7 @@ When using Doppler mode, the setup will prompt for a service token:
 doppler configs tokens create patch-gremlin-token --max-age 0
 
 # Copy the token (starts with dp.st.) and paste when prompted
-```text
+```
 
 The service token allows the notification script to access your secrets without requiring doppler login on the system.
 
@@ -148,7 +148,7 @@ export DOPPLER_TOKEN="dp.st.xxx"           # if using Doppler mode
 
 # Run setup with presets
 sudo -E ./setup-unattended-upgrades.sh
-```text
+```
 
 ### Customizing Doppler Secret Names
 
@@ -157,7 +157,7 @@ If you need different secret names (to avoid conflicts with other programs), cre
 ```bash
 cp config.example.sh config.sh
 nano config.sh
-```text
+```
 
 Edit to match your Doppler secret names:
 
@@ -170,14 +170,14 @@ export DOPPLER_MATRIX_HOMESERVER_SECRET="MY_MATRIX_SERVER"
 export DOPPLER_MATRIX_USERNAME_SECRET="MY_MATRIX_USER"
 export DOPPLER_MATRIX_PASSWORD_SECRET="MY_MATRIX_PASS"
 export DOPPLER_MATRIX_ROOM_ID_SECRET="MY_MATRIX_ROOM"
-```text
+```
 
 Then run setup with your config:
 
 ```bash
 source config.sh
 sudo -E ./setup-unattended-upgrades.sh
-```text
+```
 
 ### Local Secrets File Format
 
@@ -203,7 +203,7 @@ MATRIX_HOMESERVER="https://matrix.org"
 MATRIX_USERNAME="username"
 MATRIX_PASSWORD="your-password"
 MATRIX_ROOM_ID="!room:matrix.org"
-```text
+```
 
 **Security**: This file is automatically created with `chmod 600` (owner read/write only).
 
@@ -284,7 +284,7 @@ sudo systemctl list-timers update-notifier*
 # View logs
 sudo journalctl -t patch-gremlin --since "1 day ago"
 sudo journalctl -f -t patch-gremlin
-```text
+```
 
 ### Monitoring Integration
 
@@ -295,7 +295,7 @@ sudo ./health-check.sh
 # 0 = Healthy
 # 1 = Warning (non-critical)
 # 2 = Critical (service broken)
-```text
+```
 
 Perfect for Nagios, Zabbix, Icinga, etc.
 
@@ -303,7 +303,7 @@ Perfect for Nagios, Zabbix, Icinga, etc.
 
 ```bash
 sudo ./diagnose-config.sh
-```text
+```
 
 Shows:
 
@@ -318,7 +318,7 @@ Shows:
 
 ### Installed Files
 
-```text
+```
 /usr/local/bin/
 ├── update-notifier.sh                  # Main notification script
 
@@ -342,7 +342,7 @@ Shows:
 └── patch-gremlin.conf                  # Post-upgrade hook
 
 /usr/local/bin/patch-gremlin-dnf-hook.sh      # (RHEL only) DNF hook script
-```text
+```
 
 ### Repository Scripts
 
@@ -362,7 +362,7 @@ test-deployment.sh              # Comprehensive testing
 monitoring/
 ├── nagios-check.sh             # Nagios/Icinga integration
 └── prometheus-exporter.sh      # Prometheus metrics
-```text
+```
 
 ## Advanced Configuration
 
@@ -379,7 +379,7 @@ PATCH_GREMLIN_MAX_LOG_LINES=100         # Log lines (default: 50)
 PATCH_GREMLIN_RETRY_COUNT=5             # HTTP retries (default: 3)
 PATCH_GREMLIN_RETRY_DELAY=5             # Retry delay seconds (default: 2)
 PATCH_GREMLIN_CURL_TIMEOUT=60           # HTTP timeout seconds (default: 30)
-```text
+```
 
 ### Adjusting Verbosity
 
@@ -390,7 +390,7 @@ Change log verbosity after installation:
 sudo ./configure-verbosity.sh
 
 # Shows current setting, lets you enable/disable verbose DEBUG output
-```text
+```
 
 **Quiet mode (default):**
 
@@ -409,12 +409,12 @@ sudo ./configure-verbosity.sh
 
 If Patch Gremlin is already installed, the setup script will detect it and offer options:
 
-```text
+```
 Options:
   1) Reinstall/Reconfigure (preserves nothing)
   2) Update scripts only (keeps configuration)
   3) Cancel installation
-```text
+```
 
 Choose option 2 to update the scripts while keeping your current configuration.
 
@@ -425,7 +425,7 @@ Choose option 2 to update the scripts while keeping your current configuration.
 ```bash
 # Run comprehensive diagnostics
 sudo ./diagnose-config.sh
-```text
+```
 
 This will check:
 
@@ -448,7 +448,7 @@ sudo nano /etc/update-notifier/secrets.conf
 
 # Test notification
 sudo /usr/local/bin/update-notifier.sh
-```text
+```
 
 #### 2. DOPPLER mode authentication fails
 
@@ -462,7 +462,7 @@ doppler secrets --only-names
 
 # Check service has token
 systemctl show update-notifier.service | grep DOPPLER_TOKEN
-```text
+```
 
 #### 3. Timer not running
 
@@ -475,7 +475,7 @@ sudo systemctl enable --now update-notifier.timer
 
 # View schedule
 sudo systemctl list-timers update-notifier*
-```text
+```
 
 #### 4. Script runs but notifications fail
 
@@ -492,7 +492,7 @@ sudo cat /etc/update-notifier/secrets.conf
 
 # DOPPLER mode:
 doppler secrets get UPDATE_NOTIFIER_DISCORD_WEBHOOK --plain
-```text
+```
 
 #### 5. Too much DEBUG output in logs
 
@@ -500,7 +500,7 @@ doppler secrets get UPDATE_NOTIFIER_DISCORD_WEBHOOK --plain
 # Disable verbose logging
 sudo ./configure-verbosity.sh
 # Choose option 1 (Disable)
-```text
+```
 
 #### 6. Matrix login fails
 
@@ -515,7 +515,7 @@ grep MATRIX_USERNAME /etc/update-notifier/secrets.conf
 # DOPPLER mode:
 doppler secrets get UPDATE_NOTIFIER_MATRIX_USERNAME --plain
 # Should show just: username
-```text
+```
 
 ### Getting Help
 
@@ -528,7 +528,7 @@ doppler secrets get UPDATE_NOTIFIER_MATRIX_USERNAME --plain
 
 ```bash
 sudo ./uninstall.sh
-```text
+```
 
 This will remove:
 
