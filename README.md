@@ -4,7 +4,10 @@
   <img src="media/patch_gremlin_banner.png" alt="Patch Gremlin Banner" width="400"/>
 </div>
 
-Automated system update notifications for Debian and RHEL-based systems with Discord, Microsoft Teams, Slack, and Matrix support. Integrates with `unattended-upgrades` (Debian/Ubuntu) or `dnf-automatic` (RHEL/Fedora/Amazon Linux) to send notifications when security updates are installed.
+Automated system update notifications for Debian and RHEL-based systems with Discord,
+Microsoft Teams, Slack, and Matrix support. Integrates with `unattended-upgrades`
+(Debian/Ubuntu) or `dnf-automatic` (RHEL/Fedora/Amazon Linux) to send notifications
+when security updates are installed.
 
 ## Features
 

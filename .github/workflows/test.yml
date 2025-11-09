@@ -34,8 +34,8 @@ jobs:
       - name: Test update-notifier.sh functions
         run: |
           echo "=== Testing update-notifier.sh ==="
-          # Test log function
-          bash -c 'source update-notifier.sh 2>/dev/null || true'
+          # Test syntax only (sourcing requires environment setup)
+          bash -n update-notifier.sh
 
       - name: Test configuration validation
         run: |

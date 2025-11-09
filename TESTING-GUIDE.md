@@ -240,60 +240,57 @@ sudo systemctl start update-notifier.service
 ### If Notification Doesn't Send
 
 1. **Check service logs:**
+
    ```bash
    sudo journalctl -u update-notifier.service -n 100 --no-pager
    ```
 
 2. **Verify secrets:**
+
    ```bash
    # Local mode
    sudo cat /etc/update-notifier/secrets.conf
    
    # Doppler mode
    sudo systemctl show update-notifier.service | grep DOPPLER
-
    ```
 
 3. **Test webhook manually:**
-   ```bash
 
+   ```bash
    # For Discord
    curl -X POST "YOUR_WEBHOOK_URL" \
      -H "Content-Type: application/json" \
      -d '{"content": "Test from Patch Gremlin"}'
-
    ```
 
 4. **Run notifier script directly:**
-   ```bash
 
+   ```bash
    sudo -i
    export SECRET_MODE=local  # or configure DOPPLER_TOKEN
    /usr/local/bin/update-notifier.sh
-
    ```
 
 ### If Updates Don't Run
 
 1. **Check update service status:**
-   ```bash
 
+   ```bash
    sudo systemctl status apt-daily-upgrade.timer    # Debian
    sudo systemctl status dnf-automatic.timer        # RHEL
-
    ```
 
 2. **Check update service logs:**
-   ```bash
 
+   ```bash
    sudo journalctl -u unattended-upgrades.service -n 50    # Debian
    sudo journalctl -u dnf-automatic.service -n 50          # RHEL
-
    ```
 
 3. **Verify configuration:**
-   ```bash
 
+   ```bash
    # Debian
    cat /etc/apt/apt.conf.d/50unattended-upgrades
    
