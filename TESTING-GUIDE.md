@@ -245,7 +245,7 @@ sudo systemctl start update-notifier.service
    sudo journalctl -u update-notifier.service -n 100 --no-pager
    ```
 
-2. **Verify secrets:**
+1. **Verify secrets:**
 
    ```bash
    # Local mode
@@ -255,7 +255,7 @@ sudo systemctl start update-notifier.service
    sudo systemctl show update-notifier.service | grep DOPPLER
    ```
 
-3. **Test webhook manually:**
+1. **Test webhook manually:**
 
    ```bash
    # For Discord
@@ -264,7 +264,7 @@ sudo systemctl start update-notifier.service
      -d '{"content": "Test from Patch Gremlin"}'
    ```
 
-4. **Run notifier script directly:**
+1. **Run notifier script directly:**
 
    ```bash
    sudo -i
