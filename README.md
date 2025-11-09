@@ -623,7 +623,8 @@ This will remove:
 
 ## Contributing
 
-Issues and pull requests welcome! By contributing, you agree to license your contributions under the same dual license (MPL-2.0 / Commercial).
+Issues and pull requests welcome! By contributing, you agree to license your
+contributions under the same dual license (MPL-2.0 / Commercial).
 
 **Ways to contribute:**
 
