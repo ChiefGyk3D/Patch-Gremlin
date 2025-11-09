@@ -2,9 +2,9 @@ name: Testing
 
 on:
   push:
-    branches: [ main, develop, doppler_setup_fix ]
+    branches: [main, develop, doppler_setup_fix]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   unit-tests:
@@ -36,7 +36,7 @@ jobs:
           echo "=== Testing update-notifier.sh ==="
           # Test log function
           bash -c 'source update-notifier.sh 2>/dev/null || true'
-          
+
       - name: Test configuration validation
         run: |
           echo "=== Testing Configuration Validation ==="
@@ -60,7 +60,7 @@ jobs:
           echo "=== Testing Deployment Validation ==="
           # Test that test-deployment.sh can be parsed
           bash -n test-deployment.sh
-          
+
       - name: Test diagnostic scripts
         run: |
           echo "=== Testing Diagnostic Scripts ==="

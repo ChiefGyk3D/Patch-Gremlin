@@ -66,7 +66,7 @@ jobs:
             "configure-verbosity.sh"
             "fix-verbose-now.sh"
           )
-          
+
           for file in "${required_files[@]}"; do
             if [ -f "$file" ]; then
               echo "✓ Found: $file"
@@ -95,7 +95,8 @@ jobs:
           echo "" >> RELEASE_NOTES.md
           echo "## Installation" >> RELEASE_NOTES.md
           echo '```bash' >> RELEASE_NOTES.md
-          echo "curl -sL https://github.com/ChiefGyk3D/Patch-Gremlin/archive/${VERSION}.tar.gz | tar xz" >> RELEASE_NOTES.md
+          REPO_URL="https://github.com/ChiefGyk3D/Patch-Gremlin"
+          echo "curl -sL ${REPO_URL}/archive/${VERSION}.tar.gz | tar xz" >> RELEASE_NOTES.md
           echo "cd Patch-Gremlin-${VERSION#v}" >> RELEASE_NOTES.md
           echo "sudo -E bash setup-unattended-upgrades.sh" >> RELEASE_NOTES.md
           echo '```' >> RELEASE_NOTES.md

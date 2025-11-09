@@ -2,9 +2,9 @@ name: Security Checks
 
 on:
   push:
-    branches: [ main, develop, doppler_setup_fix ]
+    branches: [main, develop, doppler_setup_fix]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   schedule:
     # Run security checks weekly on Mondays at 9 AM UTC
     - cron: '0 9 * * 1'

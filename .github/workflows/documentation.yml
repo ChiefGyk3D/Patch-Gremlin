@@ -2,11 +2,11 @@ name: Documentation
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     paths:
       - '**.md'
   pull_request:
-    branches: [ main ]
+    branches: [main]
     paths:
       - '**.md'
 
@@ -39,7 +39,7 @@ jobs:
             "TESTING-GUIDE.md"
             "TROUBLESHOOTING.md"
           )
-          
+
           for doc in "${required_docs[@]}"; do
             if [ -f "$doc" ]; then
               echo "✓ Found: $doc"

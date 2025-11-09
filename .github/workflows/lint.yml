@@ -2,9 +2,9 @@ name: Linting and Code Quality
 
 on:
   push:
-    branches: [ main, develop, doppler_setup_fix ]
+    branches: [main, develop, doppler_setup_fix]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   shellcheck:
