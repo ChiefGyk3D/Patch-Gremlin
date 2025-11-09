@@ -663,8 +663,10 @@ If you find Patch Gremlin useful, consider supporting development:
 <div align="center">
   <table>
     <tr>
+      <!-- markdownlint-disable MD013 -->
       <td align="center"><a href="https://patreon.com/chiefgyk3d?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink" title="Patreon"><img src="https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/patreon.svg" width="32" height="32" alt="Patreon"/></a></td>
       <td align="center"><a href="https://streamelements.com/chiefgyk3d/tip" title="StreamElements"><img src="media/streamelements.png" width="32" height="32" alt="StreamElements"/></a></td>
+      <!-- markdownlint-enable MD013 -->
     </tr>
     <tr>
       <td align="center">Patreon</td>
@@ -715,6 +717,7 @@ Made with ❤️ by [ChiefGyk3D](https://github.com/ChiefGyk3D)
 
 ## Author & Socials
 
+<!-- markdownlint-disable MD013 -->
 <table>
   <tr>
     <td align="center"><a href="https://social.chiefgyk3d.com/@chiefgyk3d" title="Mastodon"><img src="https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/mastodon.svg" width="32" height="32" alt="Mastodon"/></a></td>
@@ -726,6 +729,7 @@ Made with ❤️ by [ChiefGyk3D](https://github.com/ChiefGyk3D)
     <td align="center"><a href="https://discord.chiefgyk3d.com" title="Discord"><img src="https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/discord.svg" width="32" height="32" alt="Discord"/></a></td>
     <td align="center"><a href="https://matrix-invite.chiefgyk3d.com" title="Matrix"><img src="https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/matrix.svg" width="32" height="32" alt="Matrix"/></a></td>
   </tr>
+<!-- markdownlint-enable MD013 -->
   <tr>
     <td align="center">Mastodon</td>
     <td align="center">Bluesky</td>
