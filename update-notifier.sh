@@ -261,7 +261,7 @@ AVAILABLE_PACKAGES=""
 if [[ "$OS_TYPE" == "debian" ]]; then
     # Run apt list --upgradable to check for any available updates
     AVAILABLE_PACKAGES=$(apt list --upgradable 2>/dev/null | grep "upgradable" | awk -F'/' '{print $1}' | head -n 10 | tr '\n' ', ' | sed 's/, $//')
-    AVAILABLE_UPDATES=$(apt list --upgradable 2>/dev/null | grep -c "upgradable" 2>/dev/null || echo "0")
+    AVAILABLE_UPDATES=$(apt list --upgradable 2>/dev/null | { grep -c "upgradable" || true; })
     AVAILABLE_UPDATES=$(echo "$AVAILABLE_UPDATES" | tr -d '[:space:]')
     if [[ "$AVAILABLE_UPDATES" -gt 0 ]]; then
         log "INFO: Found $AVAILABLE_UPDATES upgradable packages (including non-security updates): $AVAILABLE_PACKAGES"
@@ -269,7 +269,7 @@ if [[ "$OS_TYPE" == "debian" ]]; then
 elif [[ "$OS_TYPE" == "rhel" ]]; then
     # Check for available updates on RHEL-based systems
     AVAILABLE_PACKAGES=$(dnf check-update -q 2>/dev/null | grep -v "^$" | awk '{print $1}' | head -n 10 | tr '\n' ', ' | sed 's/, $//')
-    AVAILABLE_UPDATES=$(dnf check-update -q 2>/dev/null | grep -v "^$" | wc -l 2>/dev/null || echo "0")
+    AVAILABLE_UPDATES=$(dnf check-update -q 2>/dev/null | { grep -v "^$" || true; } | wc -l)
     AVAILABLE_UPDATES=$(echo "$AVAILABLE_UPDATES" | tr -d '[:space:]')
     if [[ "$AVAILABLE_UPDATES" -gt 0 ]]; then
         log "INFO: Found $AVAILABLE_UPDATES upgradable packages (including non-security updates): $AVAILABLE_PACKAGES"
@@ -296,7 +296,7 @@ else
         # Debian/Ubuntu - check for actual package installations in the MOST RECENT run only
         if echo "$RECENT_LOG" | grep -qE "(Packages that will be upgraded|The following packages will be upgraded):"; then
             # Extract from MOST RECENT occurrence only to avoid cumulative counting
-            RECENT_UPGRADED=$(tac "$TEMP_LOG" | awk '/Packages that will be upgraded/{flag=1; next} flag{if(/^$/ || /INFO/ || /DEBUG/ || /WARNING/) exit; print}' | tac | tr -s ' ' '\n' | grep -v '^$' | wc -l 2>/dev/null || echo "0")
+            RECENT_UPGRADED=$(tac "$TEMP_LOG" | awk '/Packages that will be upgraded/{flag=1; next} flag{if(/^$/ || /INFO/ || /DEBUG/ || /WARNING/) exit; print}' | tac | tr -s ' ' '\n' | { grep -v '^$' || true; } | wc -l)
             RECENT_UPGRADED=$(echo "$RECENT_UPGRADED" | tr -d '[:space:]')
             if [[ $RECENT_UPGRADED -gt 0 ]]; then
                 UPDATE_STATUS="updated"
@@ -367,7 +367,7 @@ else
             UPGRADED_PACKAGE_NAMES=$(tac "$TEMP_LOG" | awk '/Packages that will be upgraded/{flag=1; next} flag{if(/^$/ || /INFO/ || /DEBUG/ || /WARNING/) exit; print}' | tac | tr -s ' ' '\n' | grep -v '^$' | head -n 20 | tr '\n' ', ' | sed 's/, $//' || true)
             # Count packages by splitting on comma and filtering empty strings
             if [[ -n "$UPGRADED_PACKAGE_NAMES" ]]; then
-                PACKAGE_COUNT=$(echo "$UPGRADED_PACKAGE_NAMES" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -c '^[^[:space:]]' || echo "0")
+                PACKAGE_COUNT=$(echo "$UPGRADED_PACKAGE_NAMES" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | { grep -c '^[^[:space:]]' || true; })
             else
                 PACKAGE_COUNT=0
             fi
@@ -386,7 +386,7 @@ else
             UPGRADED_PACKAGE_NAMES=$(grep -A 20 "Upgraded:" "$TEMP_LOG" | tail -1 | grep -oE "[a-zA-Z0-9_+-]+" | head -n 20 | tr '\n' ', ' | sed 's/, $//' || true)
             # Count packages by splitting on comma and filtering empty strings
             if [[ -n "$UPGRADED_PACKAGE_NAMES" ]]; then
-                PACKAGE_COUNT=$(echo "$UPGRADED_PACKAGE_NAMES" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -c '^[^[:space:]]' || echo "0")
+                PACKAGE_COUNT=$(echo "$UPGRADED_PACKAGE_NAMES" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | { grep -c '^[^[:space:]]' || true; })
             else
                 PACKAGE_COUNT=0
             fi
@@ -646,7 +646,7 @@ if [[ "$MATRIX_CONFIGURED" == true ]]; then
             MATRIX_UPGRADED_PACKAGES=$(tac "$TEMP_LOG" | awk '/Packages that will be upgraded/{flag=1; next} flag{if(/^$/ || /INFO/ || /DEBUG/ || /WARNING/) exit; print}' | tac | tr -s ' ' '\n' | grep -v '^$' | head -n 20 | tr '\n' ', ' | sed 's/, $//' || true)
             # Count packages by splitting on comma and filtering empty strings
             if [[ -n "$MATRIX_UPGRADED_PACKAGES" ]]; then
-                PACKAGE_COUNT=$(echo "$MATRIX_UPGRADED_PACKAGES" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -c '^[^[:space:]]' || echo "0")
+                PACKAGE_COUNT=$(echo "$MATRIX_UPGRADED_PACKAGES" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | { grep -c '^[^[:space:]]' || true; })
             else
                 PACKAGE_COUNT=0
             fi
@@ -665,7 +665,7 @@ if [[ "$MATRIX_CONFIGURED" == true ]]; then
             MATRIX_UPGRADED_PACKAGES=$(grep -A 20 "Upgraded:" "$TEMP_LOG" | tail -1 | grep -oE "[a-zA-Z0-9_+-]+" | head -n 20 | tr '\n' ', ' | sed 's/, $//' || true)
             # Count packages by splitting on comma and filtering empty strings
             if [[ -n "$MATRIX_UPGRADED_PACKAGES" ]]; then
-                PACKAGE_COUNT=$(echo "$MATRIX_UPGRADED_PACKAGES" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -c '^[^[:space:]]' || echo "0")
+                PACKAGE_COUNT=$(echo "$MATRIX_UPGRADED_PACKAGES" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | { grep -c '^[^[:space:]]' || true; })
             else
                 PACKAGE_COUNT=0
             fi

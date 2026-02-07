@@ -282,6 +282,29 @@ else
 fi
 echo ""
 
+# Ask about automatic reboot (unless already set via environment)
+if [[ -z "${AUTO_REBOOT:-}" ]]; then
+    echo -e "${YELLOW}Automatic Reboot:${NC}"
+    echo "Automatically reboot after updates if the system requires it?"
+    echo ""
+    echo "  • Yes: System will reboot automatically when kernel/library updates require it"
+    echo "  • No: You will need to manually reboot when required"
+    echo ""
+    read -p "Enable automatic reboot? (y/n) [default: y]: " -n 1 -r REBOOT_CHOICE
+    echo ""
+    
+    if [[ "$REBOOT_CHOICE" =~ ^[Nn]$ ]]; then
+        AUTO_REBOOT="false"
+        echo -e "${GREEN}Selected: Manual reboot required${NC}"
+    else
+        AUTO_REBOOT="true"
+        echo -e "${GREEN}Selected: Automatic reboot enabled${NC}"
+    fi
+else
+    echo -e "\n${GREEN}Using preset auto-reboot: ${AUTO_REBOOT}${NC}"
+fi
+echo ""
+
 # Ask about secret storage method (unless already set via environment)
 if [[ -z "$SECRET_MODE" ]]; then
     echo -e "${YELLOW}Secret Storage:${NC}"
@@ -484,9 +507,9 @@ Unattended-Upgrade::Package-Blacklist {
 };
 
 // Automatically reboot if needed
-Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Automatic-Reboot "PLACEHOLDER_AUTO_REBOOT";
 Unattended-Upgrade::Automatic-Reboot-Time "03:00";
-Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
 
 // Remove unused packages
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
@@ -497,6 +520,9 @@ Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
 Unattended-Upgrade::SyslogEnable "true";
 Unattended-Upgrade::SyslogFacility "daemon";
 EOF
+    
+    # Replace placeholders with actual values (heredoc uses quoted EOF so variables aren't expanded)
+    sed -i "s/PLACEHOLDER_AUTO_REBOOT/${AUTO_REBOOT}/" /etc/apt/apt.conf.d/50unattended-upgrades
     
     # Add verbose setting (must be outside heredoc to allow variable expansion)
     echo "Unattended-Upgrade::Verbose \"${VERBOSE_LOGGING}\";" >> /etc/apt/apt.conf.d/50unattended-upgrades
