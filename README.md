@@ -15,6 +15,7 @@ Linux) to send notifications when security updates are installed.
 - 🔒 **Flexible Secrets**: Use Doppler for centralized management OR local file storage
 - 🎨 **Configurable**: Customize secret names and update schedules
 - ⚙️ **Automated**: Integrates with unattended-upgrades and systemd
+- 🔄 **Auto-Reboot**: Optional automatic reboot after kernel/critical updates (configurable during setup)
 - 🧠 **Intelligent**: Analyzes logs to distinguish between "5 packages updated" vs "no updates available"
 - 📊 **Informative**: Rich notifications with hostname, timezone-aware timestamps, and logs
 - 🌍 **Timezone-Aware**: Detects and configures system timezone during setup
@@ -45,6 +46,7 @@ sudo ./setup-unattended-upgrades.sh
 #    - Choose schedule (daily / weekly)
 #    - Choose timezone
 #    - Choose verbose logging (default: quiet)
+#    - Choose auto-reboot after updates (default: enabled)
 #    - Choose LOCAL file storage
 #    - Enter webhook URLs for your platforms
 
@@ -121,11 +123,16 @@ The setup script (`setup-unattended-upgrades.sh`) will interactively ask you abo
    - Quiet (recommended) - only important messages
    - Verbose - detailed DEBUG output
 
-5. **Secret Storage**
+5. **Automatic Reboot**
+   - Enabled (recommended) - automatically reboots after kernel or critical library updates
+   - Disabled - requires manual reboot after kernel updates
+   - Reboots even with logged-in users when enabled
+
+6. **Secret Storage**
    - LOCAL file - simpler, secrets in `/etc/update-notifier/secrets.conf`
    - DOPPLER - centralized, requires Doppler CLI and service token
 
-6. **Notification Platforms**
+7. **Notification Platforms**
    - Discord webhook URL
    - Microsoft Teams webhook URL
    - Slack webhook URL
@@ -143,6 +150,7 @@ export UPDATE_DAY="Sat"                    # if weekly: Sun, Mon, Tue, Wed, Thu,
 export UPDATE_TIME="02:00"                 # 24-hour format
 export SYSTEM_TIMEZONE="US/Eastern"        # or leave unset for current
 export VERBOSE_LOGGING="false"             # or "true" for debug
+export AUTO_REBOOT="true"                  # or "false" to disable auto-reboot
 export SECRET_MODE="local"                 # or "doppler"
 export DOPPLER_TOKEN="dp.st.xxx"           # if using Doppler mode
 
