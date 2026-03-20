@@ -278,11 +278,24 @@ fi
 
 # Read recent log entries and analyze what happened
 TEMP_LOG=""
+PLAIN_SUMMARY=""
 if [[ ! -f "$LOG_FILE" ]]; then
     log "WARNING: Log file $LOG_FILE not found. Sending notification anyway."
-    LOG_OUTPUT="Log file not found at $LOG_FILE"
-    UPDATE_STATUS="unknown"
-    UPDATE_SUMMARY="Log file not available"
+    if [[ "$AVAILABLE_UPDATES" -gt 0 ]]; then
+        UPDATE_STATUS="updates-available"
+        UPDATE_SUMMARY="${AVAILABLE_UPDATES} non-security package(s) available"
+        PLAIN_SUMMARY="📦 Updates Available: ${AVAILABLE_UPDATES} non-security packages\n   Packages: ${AVAILABLE_PACKAGES}"
+        if [[ "$AVAILABLE_UPDATES" -gt 10 ]]; then
+            PLAIN_SUMMARY="${PLAIN_SUMMARY}... and $((AVAILABLE_UPDATES - 10)) more"
+        fi
+        PLAIN_SUMMARY="${PLAIN_SUMMARY}\nℹ️  No unattended-upgrades history yet (first run)"
+    else
+        UPDATE_STATUS="no-updates"
+        UPDATE_SUMMARY="System is up to date"
+        PLAIN_SUMMARY="✅ System is up to date\nℹ️  No unattended-upgrades history yet (first run)"
+    fi
+    LOG_OUTPUT=$(echo -e "$PLAIN_SUMMARY" | python3 -c "import sys, json; print(json.dumps(sys.stdin.read())[1:-1])" 2>/dev/null || \
+        echo -e "$PLAIN_SUMMARY" | awk '{gsub(/\\/,"\\\\",$0); gsub(/"/,"\\\"",$0); gsub(/\t/,"\\t",$0); printf "%s ", $0}' | sed 's/[[:cntrl:]]//g')
 else
     # Create a snapshot to avoid race conditions with active logging
     TEMP_LOG=$(mktemp)
@@ -429,6 +442,9 @@ else
     if [[ -z "$HUMAN_SUMMARY" ]]; then
         HUMAN_SUMMARY="✅ Update check completed successfully"
     fi
+
+    # Store plain-text summary for Matrix reuse
+    PLAIN_SUMMARY="$HUMAN_SUMMARY"
     
     # Prepare for JSON (safely escaped)
     LOG_OUTPUT=$(echo -e "$HUMAN_SUMMARY" | python3 -c "import sys, json; print(json.dumps(sys.stdin.read())[1:-1])" 2>/dev/null || {
@@ -447,12 +463,24 @@ if [[ "$UPDATE_STATUS" == "updated" ]] && [[ -z "$UPGRADED_PACKAGE_NAMES" ]] && 
     log "INFO: Corrected status - no packages were actually upgraded this run"
 fi
 
+# Promote status when non-security updates are available but no security updates applied
+if [[ "$UPDATE_STATUS" == "no-updates" ]] && [[ "$AVAILABLE_UPDATES" -gt 0 ]]; then
+    UPDATE_STATUS="updates-available"
+    UPDATE_SUMMARY="${AVAILABLE_UPDATES} non-security package(s) available"
+    log "INFO: Promoting status - ${AVAILABLE_UPDATES} non-security packages available"
+fi
+
 # Set notification title and description based on status
 case "$UPDATE_STATUS" in
     "updated")
         NOTIFICATION_TITLE="System Updates Applied on $HOSTNAME"
         NOTIFICATION_DESC="$UPDATE_SUMMARY at **$LAST_RUN**"
         NOTIFICATION_COLOR=5814783  # Green
+        ;;
+    "updates-available")
+        NOTIFICATION_TITLE="System Updates Available on $HOSTNAME"
+        NOTIFICATION_DESC="$UPDATE_SUMMARY at **$LAST_RUN**"
+        NOTIFICATION_COLOR=16744272  # Orange
         ;;
     "no-updates")
         NOTIFICATION_TITLE="System Update Check Complete on $HOSTNAME"
@@ -704,9 +732,13 @@ if [[ "$MATRIX_CONFIGURED" == true ]]; then
         MATRIX_SUMMARY="${MATRIX_SUMMARY}\n❌ Error: ${ERROR_MSG}"
     fi
     
-    # Default if nothing was found
+    # Default if nothing was found - fall back to pre-computed summary
     if [[ -z "$MATRIX_SUMMARY" ]]; then
-        MATRIX_SUMMARY="✅ Update check completed successfully"
+        if [[ -n "$PLAIN_SUMMARY" ]]; then
+            MATRIX_SUMMARY="$PLAIN_SUMMARY"
+        else
+            MATRIX_SUMMARY="✅ Update check completed successfully"
+        fi
     fi
     
     MATRIX_LOG=$(echo -e "$MATRIX_SUMMARY")
