@@ -277,6 +277,7 @@ elif [[ "$OS_TYPE" == "rhel" ]]; then
 fi
 
 # Read recent log entries and analyze what happened
+TEMP_LOG=""
 if [[ ! -f "$LOG_FILE" ]]; then
     log "WARNING: Log file $LOG_FILE not found. Sending notification anyway."
     LOG_OUTPUT="Log file not found at $LOG_FILE"
