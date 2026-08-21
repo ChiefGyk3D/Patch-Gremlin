@@ -502,9 +502,11 @@ EOF
 
     write_file "/etc/systemd/system/${upgrade_unit}.d/patch-gremlin.conf" 644 <<EOF
 # Managed by Patch Gremlin - notify once the upgrade run has finished.
+# No EnvironmentFile here on purpose: that would put the Doppler token into
+# the environment of the upgrade process itself. The notifier reads
+# /etc/update-notifier/env (mode 600) on its own.
 [Service]
 ExecStartPost=-/usr/local/bin/update-notifier.sh
-EnvironmentFile=/etc/update-notifier/env
 EOF
     ok "Hooked notifications onto ${upgrade_unit}"
 

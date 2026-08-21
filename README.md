@@ -26,7 +26,7 @@ installed.
 - 🌍 **Timezone-Aware**: Detects and configures the system timezone during setup
 - 🤖 **Automatable**: Every setting can come from the environment — no prompts required
 - 🖥️ **Multi-OS**: Debian/Ubuntu/Raspbian and RHEL/Rocky/AlmaLinux/Amazon Linux/Fedora
-- ✅ **Tested**: 91 automated tests running against six distributions in CI
+- ✅ **Tested**: 104 automated tests running against six distributions in CI
 
 ## Quick Start
 

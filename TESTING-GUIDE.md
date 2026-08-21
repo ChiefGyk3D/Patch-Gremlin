@@ -15,7 +15,7 @@ bats tests/
 shellcheck -x -S style $(find . -name '*.sh' -not -path './.git/*')
 ```
 
-91 tests cover log parsing against real-format fixtures, status
+104 tests cover log parsing against real-format fixtures, status
 classification, JSON payload validity under hostile input, staged installs and
 uninstalls, secret permissions, and the monitoring integrations. Nothing is
 written outside a temporary directory and no network call is made — `curl`,

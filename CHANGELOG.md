@@ -108,7 +108,7 @@ the new secret layout and trigger wiring are applied.
   (the old code registered a new device on every single run).
 - Teams Adaptive Card payloads, replacing the retired MessageCard connector
   format.
-- **A 91-test bats suite** plus CI that runs it on Debian 12/13,
+- **A 104-test bats suite** plus CI that runs it on Debian 12/13,
   Ubuntu 22.04/24.04, Rocky 9 and Fedora 41. ShellCheck now gates at
   `-S style`, which catches the `$?`-after-assignment and `echo "\n"` classes
   of bug that shipped in 1.x.

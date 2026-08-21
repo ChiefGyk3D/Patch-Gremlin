@@ -272,3 +272,149 @@ MATRIX_ROOM_ID="!room:example.org"'
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage"* ]]
 }
+
+# --------------------------------------------------------------------------
+# Additional platforms
+# --------------------------------------------------------------------------
+
+@test "ntfy: sends a valid payload with the topic and bearer token" {
+    write_secrets '
+NTFY_URL="https://ntfy.example.com"
+NTFY_TOPIC="servers"
+NTFY_TOKEN="tk_secret"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-upgraded.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian
+    [ "$status" -eq 0 ]
+    assert_payloads_valid_json
+    [ "$(payload_field "$STUB_CAPTURE_DIR/payload-1" topic)" = "servers" ]
+    grep -q 'Authorization: Bearer tk_secret' "$STUB_CAPTURE_DIR/call-1"
+}
+
+@test "ntfy: works without a token (empty auth array under set -u)" {
+    write_secrets '
+NTFY_URL="https://ntfy.example.com"
+NTFY_TOPIC="servers"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-upgraded.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"unbound variable"* ]]
+    assert_payloads_valid_json
+}
+
+@test "gotify: appends the token to the URL and sends valid JSON" {
+    write_secrets '
+GOTIFY_URL="https://gotify.example.com/message"
+GOTIFY_TOKEN="AtokenX"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-upgraded.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian
+    [ "$status" -eq 0 ]
+    assert_payloads_valid_json
+    grep -q 'token=AtokenX' "$STUB_CAPTURE_DIR/call-1"
+}
+
+@test "generic webhook: emits machine-readable fields" {
+    write_secrets 'GENERIC_WEBHOOK_URL="https://example.com/hook"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-upgraded.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian STUB_UPGRADABLE="vim nano"
+    [ "$status" -eq 0 ]
+    assert_payloads_valid_json
+    [ "$(payload_field "$STUB_CAPTURE_DIR/payload-1" status)" = "updated" ]
+    [ "$(payload_field "$STUB_CAPTURE_DIR/payload-1" upgraded_count)" = "3" ]
+    [ "$(payload_field "$STUB_CAPTURE_DIR/payload-1" pending_total)" = "2" ]
+}
+
+@test "matrix: a preset access token skips the login round trip" {
+    write_secrets '
+MATRIX_HOMESERVER="https://matrix.example.org"
+MATRIX_ACCESS_TOKEN="syt_preset"
+MATRIX_ROOM_ID="!room:example.org"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-upgraded.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian
+    [ "$status" -eq 0 ]
+    ! grep -rq '/login' "$STUB_CAPTURE_DIR"/call-* 2>/dev/null
+    grep -q 'Authorization: Bearer syt_preset' "$STUB_CAPTURE_DIR"/call-1
+}
+
+@test "matrix: password login is followed by a logout" {
+    # v1 registered a fresh device on every run and never logged out.
+    write_secrets '
+MATRIX_HOMESERVER="https://matrix.example.org"
+MATRIX_USERNAME="@bot:example.org"
+MATRIX_PASSWORD="hunter2"
+MATRIX_ROOM_ID="!room:example.org"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-upgraded.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian
+    [ "$status" -eq 0 ]
+    grep -rq '/_matrix/client/v3/login' "$STUB_CAPTURE_DIR"/call-*
+    grep -rq '/_matrix/client/v3/logout' "$STUB_CAPTURE_DIR"/call-*
+    # and never the deprecated r0 API
+    ! grep -rq '/client/r0/' "$STUB_CAPTURE_DIR"/call-*
+}
+
+@test "notifier reads /etc/update-notifier/env itself when run by hand" {
+    rm -f "$PATCH_GREMLIN_SECRETS_FILE"
+    printf 'SECRET_MODE=local\n' > "$SANDBOX/envfile"
+    chmod 600 "$SANDBOX/envfile"
+    write_secrets 'DISCORD_WEBHOOK="https://discord.com/api/webhooks/1/abc"'
+    run_notifier PATCH_GREMLIN_ENV_FILE="$SANDBOX/envfile" \
+                 PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-upgraded.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian
+    [ "$status" -eq 0 ]
+    assert_payloads_valid_json
+}
+
+@test "NOTIFY_ON=changes stays silent when nothing changed" {
+    write_secrets 'DISCORD_WEBHOOK="https://discord.com/api/webhooks/1/abc"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-no-updates.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian PATCH_GREMLIN_NOTIFY_ON=changes
+    [ "$status" -eq 0 ]
+    [ ! -e "$STUB_CAPTURE_DIR/payload-1" ]
+}
+
+@test "NOTIFY_ON=changes still reports when packages were upgraded" {
+    write_secrets 'DISCORD_WEBHOOK="https://discord.com/api/webhooks/1/abc"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-upgraded.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian PATCH_GREMLIN_NOTIFY_ON=changes
+    [ "$status" -eq 0 ]
+    assert_payloads_valid_json
+}
+
+@test "state file is written for the monitoring integrations" {
+    write_secrets 'DISCORD_WEBHOOK="https://discord.com/api/webhooks/1/abc"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-upgraded.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian STUB_UPGRADABLE="vim"
+    [ "$status" -eq 0 ]
+    [ -r "$PATCH_GREMLIN_STATE_DIR/state" ]
+    grep -q 'last_status=updated' "$PATCH_GREMLIN_STATE_DIR/state"
+    grep -q 'upgraded_count=3' "$PATCH_GREMLIN_STATE_DIR/state"
+    grep -q 'notification_sent=true' "$PATCH_GREMLIN_STATE_DIR/state"
+}
+
+@test "an error in the upgrade log is surfaced as an error status" {
+    write_secrets 'DISCORD_WEBHOOK="https://discord.com/api/webhooks/1/abc"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-error-quotes.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian
+    [ "$status" -eq 0 ]
+    title="$(payload_field "$STUB_CAPTURE_DIR/payload-1" embeds.0.title)"
+    [[ "$title" == *"Error"* ]]
+}
+
+@test "held-back packages appear in the summary" {
+    write_secrets 'DISCORD_WEBHOOK="https://discord.com/api/webhooks/1/abc"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-kept-back.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian
+    [ "$status" -eq 0 ]
+    desc="$(payload_field "$STUB_CAPTURE_DIR/payload-1" embeds.0.description)"
+    [[ "$desc" == *"Held Back"* ]]
+    [[ "$desc" == *"linux-image-amd64"* ]]
+}
+
+@test "security updates are counted separately from the total" {
+    write_secrets 'GENERIC_WEBHOOK_URL="https://example.com/hook"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-no-updates.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian \
+                 STUB_UPGRADABLE="vim nano" STUB_UPGRADABLE_SECURITY="openssl libssl3"
+    [ "$status" -eq 0 ]
+    [ "$(payload_field "$STUB_CAPTURE_DIR/payload-1" pending_total)" = "4" ]
+    [ "$(payload_field "$STUB_CAPTURE_DIR/payload-1" pending_security)" = "2" ]
+}
