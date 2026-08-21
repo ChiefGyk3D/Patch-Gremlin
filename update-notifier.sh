@@ -39,9 +39,21 @@ readonly COLOR_RED=15158332
 # Logging
 # ---------------------------------------------------------------------------
 log() {
-    logger -t "patch-gremlin" "$*" 2>/dev/null || true
-    if [[ -z "${INVOCATION_ID:-}" ]]; then
+    # ALWAYS write to stderr. A previous version suppressed this whenever
+    # INVOCATION_ID was set, intending "we are under systemd, the journal has
+    # it already". That variable is inherited by anything systemd started,
+    # including CI runners and any shell spawned from a service, so
+    # diagnostics silently vanished exactly where they were most needed.
+    #
+    # JOURNAL_STREAM is the signal systemd documents for "my stderr is already
+    # connected to journald"; when it is set we skip the duplicate syslog
+    # write, and update-notifier.service carries SyslogIdentifier=patch-gremlin
+    # so `journalctl -t patch-gremlin` still finds these lines.
+    if [[ -z "${JOURNAL_STREAM:-}" ]]; then
+        logger -t "patch-gremlin" "$*" 2>/dev/null || true
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
+    else
+        echo "$*" >&2
     fi
 }
 

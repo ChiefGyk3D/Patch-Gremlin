@@ -473,6 +473,7 @@ User=root
 TimeoutStartSec=300
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=patch-gremlin
 
 # Hardening - this service only reads logs and makes outbound HTTPS calls.
 NoNewPrivileges=true

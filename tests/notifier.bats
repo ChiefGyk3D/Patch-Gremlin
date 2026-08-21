@@ -418,3 +418,38 @@ MATRIX_ROOM_ID="!room:example.org"'
     [ "$(payload_field "$STUB_CAPTURE_DIR/payload-1" pending_total)" = "4" ]
     [ "$(payload_field "$STUB_CAPTURE_DIR/payload-1" pending_security)" = "2" ]
 }
+
+# --------------------------------------------------------------------------
+# Log visibility
+# --------------------------------------------------------------------------
+
+@test "log output survives INVOCATION_ID being set (CI / systemd-spawned shells)" {
+    # Regression: log() used to suppress stderr whenever INVOCATION_ID was
+    # set. systemd exports it to anything it starts - including CI runners -
+    # so every diagnostic vanished in exactly those environments.
+    rm -f "$PATCH_GREMLIN_SECRETS_FILE"
+    run_notifier SECRET_MODE=local INVOCATION_ID=deadbeefcafe \
+                 PATCH_GREMLIN_OS_TYPE=debian \
+                 PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-no-updates.log"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"No notification methods configured"* ]]
+}
+
+@test "log output survives JOURNAL_STREAM being set" {
+    rm -f "$PATCH_GREMLIN_SECRETS_FILE"
+    run_notifier SECRET_MODE=local JOURNAL_STREAM=8:12345 \
+                 PATCH_GREMLIN_OS_TYPE=debian \
+                 PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-no-updates.log"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"No notification methods configured"* ]]
+}
+
+@test "failure reporting is visible under systemd-style environments" {
+    write_secrets 'DISCORD_WEBHOOK="https://discord.com/api/webhooks/1/abc"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-upgraded.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian STUB_HTTP_CODE=500 \
+                 INVOCATION_ID=deadbeefcafe JOURNAL_STREAM=8:12345 \
+                 PATCH_GREMLIN_RETRY_COUNT=1 PATCH_GREMLIN_RETRY_DELAY=0
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"All notification attempts failed"* ]]
+}

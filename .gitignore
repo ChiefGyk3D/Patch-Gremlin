@@ -13,6 +13,9 @@ config.sh
 
 # Logs
 *.log
+# ...but the test fixtures ARE the real log formats we parse, so they must be
+# tracked. Without this the suite passes locally and fails in CI.
+!tests/fixtures/*.log
 
 # Test artifacts
 tests/**/*.tmp

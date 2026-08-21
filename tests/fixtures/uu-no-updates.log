@@ -1,0 +1,3 @@
+2025-08-20 06:17:15,236 INFO Starting unattended upgrades script
+2025-08-20 06:17:15,236 INFO Allowed origins are: o=Debian,n=bookworm, o=Debian,n=bookworm-security
+2025-08-20 06:17:18,123 INFO No packages found that can be upgraded unattended and no pending auto-removals
