@@ -1,137 +1,179 @@
 #!/bin/bash
-
+#
 # Patch Gremlin Uninstaller
-# Removes all installed components
+# Removes installed components, optionally the underlying update system too.
 
 set -euo pipefail
 
+PATCH_GREMLIN_VERSION="2.0.0"
+
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${YELLOW}Patch Gremlin Uninstaller${NC}"
-echo "This will remove all Patch Gremlin components."
-echo ""
-echo "Options:"
-echo "  1) Remove Patch Gremlin only (keep unattended-upgrades/dnf-automatic)"
-echo "  2) Remove everything including update systems"
-echo "  3) Cancel"
-echo ""
-read -p "Enter choice [1-3] (default: 1): " -n 1 -r UNINSTALL_TYPE
-echo ""
+PG_ROOT="${PATCH_GREMLIN_ROOT:-}"
+NON_INTERACTIVE="${PATCH_GREMLIN_NON_INTERACTIVE:-false}"
+REMOVE_UPDATE_SYSTEM="${REMOVE_UPDATE_SYSTEM:-false}"
+KEEP_BACKUPS="${KEEP_BACKUPS:-true}"
 
-case "$UNINSTALL_TYPE" in
-    2) REMOVE_UPDATE_SYSTEM=true ;;
-    3|*) 
-        if [[ "$UNINSTALL_TYPE" == "3" ]]; then
-            echo "Uninstall cancelled."
-            exit 0
+p()   { printf '%s%s' "$PG_ROOT" "$1"; }
+say() { echo -e "$*"; }
+ok()  { echo -e "  ${GREEN}✓${NC} $*"; }
+die() { echo -e "${RED}Error: $*${NC}" >&2; exit 1; }
+
+run_systemctl() {
+    if [[ -n "$PG_ROOT" ]]; then
+        echo "systemctl $*" >> "$PG_ROOT/systemctl.log"
+        return 0
+    fi
+    systemctl "$@" 2>/dev/null || true
+}
+
+usage() {
+    cat <<EOF
+Patch Gremlin uninstaller v${PATCH_GREMLIN_VERSION}
+
+Usage: sudo ./uninstall.sh [OPTIONS]
+
+Options:
+  -a, --all               Also remove unattended-upgrades / dnf-automatic
+  -y, --non-interactive   Do not prompt
+      --purge-backups     Delete /var/backups/patch-gremlin as well
+  -h, --help              Show this help and exit
+  -V, --version           Show the version and exit
+
+By default the update system is left in place and running, so the host keeps
+receiving security updates after Patch Gremlin is removed.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -a|--all)             REMOVE_UPDATE_SYSTEM=true ;;
+        -y|--non-interactive) NON_INTERACTIVE=true ;;
+        --purge-backups)      KEEP_BACKUPS=false ;;
+        -h|--help)            usage; exit 0 ;;
+        -V|--version)         echo "patch-gremlin $PATCH_GREMLIN_VERSION"; exit 0 ;;
+        *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+    shift
+done
+
+# Every other privileged script checked this; the uninstaller did not, so it
+# half-ran as an ordinary user with every rm failing silently.
+if [[ -z "$PG_ROOT" && $EUID -ne 0 ]]; then
+    die "This script must be run as root. Try: sudo $0"
+fi
+
+if [[ "$NON_INTERACTIVE" != "true" && -t 0 ]]; then
+    say "${YELLOW}Patch Gremlin Uninstaller${NC}"
+    say "  1) Remove Patch Gremlin only (keep automatic updates running)"
+    say "  2) Remove everything including the update system"
+    say "  3) Cancel"
+    read -rp "Enter choice [1-3] (default: 1): " choice || choice=""
+    case "$choice" in
+        2) REMOVE_UPDATE_SYSTEM=true ;;
+        3) echo "Cancelled."; exit 0 ;;
+    esac
+fi
+
+say "${YELLOW}Stopping services...${NC}"
+run_systemctl stop update-notifier.timer
+run_systemctl disable update-notifier.timer
+run_systemctl stop update-notifier.service
+
+say "${YELLOW}Removing units, hooks and scripts...${NC}"
+rm -f "$(p /etc/systemd/system/update-notifier.service)" \
+      "$(p /etc/systemd/system/update-notifier.timer)"
+
+# Drop-ins and hooks, current and legacy.
+rm -f "$(p /etc/systemd/system/apt-daily-upgrade.service.d/patch-gremlin.conf)" \
+      "$(p /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf)" \
+      "$(p /etc/apt/apt.conf.d/99patch-gremlin-notification)"
+rm -rf "$(p /etc/systemd/system/apt-daily-upgrade.timer.d)" \
+       "$(p /etc/systemd/system/dnf-automatic.timer.d)"
+for d in /etc/systemd/system/apt-daily-upgrade.service.d \
+         /etc/systemd/system/dnf-automatic.service.d \
+         /etc/systemd/system/update-notifier.service.d; do
+    rmdir "$(p "$d")" 2>/dev/null || true
+done
+
+rm -f "$(p /usr/local/bin/update-notifier.sh)" \
+      "$(p /usr/local/bin/patch-gremlin-health-check.sh)" \
+      "$(p /usr/local/bin/patch-gremlin-dnf-hook.sh)" \
+      "$(p /usr/local/bin/nagios-check.sh)" \
+      "$(p /usr/local/bin/prometheus-exporter.sh)"
+
+say "${YELLOW}Removing configuration and state...${NC}"
+rm -rf "$(p /etc/update-notifier)" "$(p /var/lib/patch-gremlin)"
+rm -f "$(p /run/patch-gremlin.lock)"
+ok "Removed secrets, configuration and state"
+
+run_systemctl daemon-reload
+
+if [[ "$REMOVE_UPDATE_SYSTEM" == "true" ]]; then
+    say "${YELLOW}Removing the update system...${NC}"
+    run_systemctl stop apt-daily-upgrade.timer
+    run_systemctl disable apt-daily-upgrade.timer
+    run_systemctl stop dnf-automatic.timer
+    run_systemctl disable dnf-automatic.timer
+
+    if [[ -z "$PG_ROOT" ]]; then
+        if command -v apt-get &>/dev/null; then
+            apt-get remove -y unattended-upgrades 2>/dev/null || true
         fi
-        REMOVE_UPDATE_SYSTEM=false
-        ;;
-esac
-
-echo -e "${YELLOW}Stopping and disabling services...${NC}"
-systemctl stop update-notifier.timer 2>/dev/null || true
-systemctl disable update-notifier.timer 2>/dev/null || true
-systemctl stop update-notifier.service 2>/dev/null || true
-systemctl disable update-notifier.service 2>/dev/null || true
-
-echo -e "${YELLOW}Removing systemd files...${NC}"
-rm -f /etc/systemd/system/update-notifier.service
-rm -f /etc/systemd/system/update-notifier.timer
-systemctl daemon-reload
-
-echo -e "${YELLOW}Removing scripts...${NC}"
-rm -f /usr/local/bin/update-notifier.sh
-rm -f /usr/local/bin/patch-gremlin-health-check.sh
-rm -f /usr/local/bin/patch-gremlin-dnf-hook.sh
-
-# Remove any monitoring scripts we might have installed
-rm -f /usr/local/bin/nagios-check.sh
-rm -f /usr/local/bin/prometheus-exporter.sh
-
-echo -e "${YELLOW}Removing configuration...${NC}"
-rm -rf /etc/update-notifier/
-
-echo -e "${YELLOW}Removing hooks and overrides...${NC}"
-# Debian/Ubuntu
-rm -f /etc/apt/apt.conf.d/99patch-gremlin-notification
-
-# RHEL/Fedora
-rm -f /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf
-rmdir /etc/systemd/system/dnf-automatic.service.d/ 2>/dev/null || true
-
-# Remove timer overrides
-rm -rf /etc/systemd/system/apt-daily-upgrade.timer.d/
-rm -rf /etc/systemd/system/dnf-automatic.timer.d/
-
-if [[ "$REMOVE_UPDATE_SYSTEM" == "true" ]]; then
-    echo -e "${YELLOW}Removing update systems...${NC}"
-    
-    # Stop and disable update services
-    systemctl stop apt-daily-upgrade.timer 2>/dev/null || true
-    systemctl disable apt-daily-upgrade.timer 2>/dev/null || true
-    systemctl stop dnf-automatic.timer 2>/dev/null || true
-    systemctl disable dnf-automatic.timer 2>/dev/null || true
-    
-    # Remove packages
-    if command -v apt-get &>/dev/null; then
-        apt-get remove -y unattended-upgrades 2>/dev/null || true
-        rm -f /etc/apt/apt.conf.d/50unattended-upgrades*
-        rm -f /etc/apt/apt.conf.d/20auto-upgrades*
+        if command -v dnf &>/dev/null; then
+            dnf remove -y dnf-automatic dnf5-automatic 2>/dev/null || true
+        elif command -v yum &>/dev/null; then
+            yum remove -y yum-cron 2>/dev/null || true
+        fi
     fi
-    
-    if command -v dnf &>/dev/null; then
-        dnf remove -y dnf-automatic 2>/dev/null || true
-        rm -f /etc/dnf/automatic.conf*
-    fi
-    
-    echo "Removed update systems"
+    rm -f "$(p /etc/apt/apt.conf.d/50unattended-upgrades)" \
+          "$(p /etc/apt/apt.conf.d/20auto-upgrades)" \
+          "$(p /etc/dnf/automatic.conf)"
+    say "${RED}Warning: automatic updates are now disabled on this host.${NC}"
 else
-    echo -e "${YELLOW}Restoring original configs...${NC}"
-    # Restore unattended-upgrades if backup exists
-    if ls /etc/apt/apt.conf.d/50unattended-upgrades.backup.* &>/dev/null; then
-        latest_backup=$(ls -t /etc/apt/apt.conf.d/50unattended-upgrades.backup.* | head -1)
-        cp "$latest_backup" /etc/apt/apt.conf.d/50unattended-upgrades
-        echo "Restored unattended-upgrades config from backup"
+    say "${YELLOW}Restoring pre-Patch-Gremlin configuration...${NC}"
+    backup_dir="$(p /var/backups/patch-gremlin)"
+    restore() {
+        local name="$1" dest="$2" latest
+        latest="$(find "$backup_dir" -maxdepth 1 -name "${name}.*" -type f 2>/dev/null | sort | tail -1)"
+        if [[ -n "$latest" ]]; then
+            cp "$latest" "$(p "$dest")"
+            ok "Restored $dest"
+        fi
+    }
+    if [[ -d "$backup_dir" ]]; then
+        restore 50unattended-upgrades /etc/apt/apt.conf.d/50unattended-upgrades
+        restore 20auto-upgrades       /etc/apt/apt.conf.d/20auto-upgrades
+        restore automatic.conf        /etc/dnf/automatic.conf
     fi
-    
-    # Restore dnf-automatic if backup exists
-    if ls /etc/dnf/automatic.conf.backup.* &>/dev/null; then
-        latest_backup=$(ls -t /etc/dnf/automatic.conf.backup.* | head -1)
-        cp "$latest_backup" /etc/dnf/automatic.conf
-        echo "Restored dnf-automatic config from backup"
-    fi
-    
-    # Re-enable original timers
-    systemctl enable apt-daily-upgrade.timer 2>/dev/null || true
-    systemctl start apt-daily-upgrade.timer 2>/dev/null || true
-    systemctl enable dnf-automatic.timer 2>/dev/null || true
-    systemctl start dnf-automatic.timer 2>/dev/null || true
+    run_systemctl enable apt-daily-upgrade.timer
+    run_systemctl start apt-daily-upgrade.timer
+    run_systemctl enable dnf-automatic.timer
+    run_systemctl start dnf-automatic.timer
+    ok "Automatic updates left enabled"
 fi
 
-systemctl daemon-reload
-
-# Clean up monitoring scripts
-echo -e "${YELLOW}Removing monitoring components...${NC}"
-rm -f /usr/local/bin/nagios-check.sh
-rm -f /usr/local/bin/prometheus-exporter.sh
-
-# Remove from crontab if present
-crontab -l 2>/dev/null | grep -v "prometheus-exporter.sh" | crontab - 2>/dev/null || true
-
-echo ""
-echo -e "${GREEN}✓ Patch Gremlin has been completely removed${NC}"
-echo ""
-if [[ "$REMOVE_UPDATE_SYSTEM" == "true" ]]; then
-    echo -e "${YELLOW}Warning: Automatic updates are now disabled!${NC}"
-    echo "Your system will no longer receive automatic security updates."
-else
-    echo "Automatic updates are still enabled and will continue working."
+if [[ "$KEEP_BACKUPS" != "true" ]]; then
+    rm -rf "$(p /var/backups/patch-gremlin)"
+    ok "Removed backups"
 fi
-echo ""
-echo "Optional cleanup:"
-echo "• Remove Doppler: sudo rm -rf /root/.doppler/"
-echo "• Remove backup configs: sudo rm -f /etc/apt/apt.conf.d/*.backup.* /etc/dnf/automatic.conf.backup.*"
-echo "• Clear logs: sudo journalctl --vacuum-time=1d"
+
+# Only rewrite root's crontab if an entry of ours is actually present -
+# piping an empty stream into `crontab -` would install a blank crontab.
+if [[ -z "$PG_ROOT" ]] && command -v crontab &>/dev/null; then
+    if crontab -l 2>/dev/null | grep -q 'prometheus-exporter.sh\|patch-gremlin'; then
+        crontab -l 2>/dev/null | grep -v 'prometheus-exporter.sh\|patch-gremlin' | crontab -
+        ok "Removed Patch Gremlin crontab entries"
+    fi
+fi
+
+run_systemctl daemon-reload
+
+say "\n${GREEN}✓ Patch Gremlin removed${NC}"
+if [[ "$KEEP_BACKUPS" == "true" && -d "$(p /var/backups/patch-gremlin)" ]]; then
+    say "Backups kept in /var/backups/patch-gremlin (remove with --purge-backups)"
+fi
+say "Doppler credentials, if any, remain in /root/.doppler/"
