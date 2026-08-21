@@ -1,0 +1,9 @@
+#!/bin/bash
+if [[ "$1" == "check-update" ]]; then
+  if [[ -n "${STUB_UPGRADABLE:-}" ]]; then
+    for p in ${STUB_UPGRADABLE:-}; do echo "$p.x86_64   1.2-3   updates"; done
+    exit 100
+  fi
+  exit 0
+fi
+exit 0
