@@ -98,8 +98,11 @@ head2 "Secrets"
 # ---------------------------------------------------------------------------
 if [[ -f /etc/update-notifier/secrets.conf ]]; then
     perms="$(stat -c '%a' /etc/update-notifier/secrets.conf)"
-    [[ "$perms" == "600" ]] && pass "secrets.conf is mode 600" \
-                            || fail "secrets.conf is mode $perms (expected 600)"
+    if [[ "$perms" == "600" ]]; then
+        pass "secrets.conf is mode 600"
+    else
+        fail "secrets.conf is mode $perms (expected 600)"
+    fi
     endpoints=0
     for key in DISCORD_WEBHOOK SLACK_WEBHOOK TEAMS_WEBHOOK MATRIX_WEBHOOK \
                MATRIX_HOMESERVER NTFY_URL GOTIFY_URL GENERIC_WEBHOOK_URL; do
@@ -107,12 +110,18 @@ if [[ -f /etc/update-notifier/secrets.conf ]]; then
             endpoints=$((endpoints + 1))
         fi
     done
-    [[ $endpoints -gt 0 ]] && pass "$endpoints notification endpoint(s) configured" \
-                           || fail "No notification endpoints configured"
+    if [[ $endpoints -gt 0 ]]; then
+        pass "$endpoints notification endpoint(s) configured"
+    else
+        fail "No notification endpoints configured"
+    fi
 elif [[ -f /etc/update-notifier/env ]]; then
     perms="$(stat -c '%a' /etc/update-notifier/env)"
-    [[ "$perms" == "600" ]] && pass "env file is mode 600" \
-                            || fail "env file is mode $perms (expected 600)"
+    if [[ "$perms" == "600" ]]; then
+        pass "env file is mode 600"
+    else
+        fail "env file is mode $perms (expected 600)"
+    fi
 else
     fail "No secret storage found in /etc/update-notifier"
 fi

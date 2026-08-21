@@ -264,7 +264,7 @@ count_pending_updates() {
 
     set +e
     local sec
-    sec="$(dnf check-update --security -q 2>/dev/null | grep -vE '^(Last metadata|Obsoleting|Security:|$)' | wc -l)"
+    sec="$(dnf check-update --security -q 2>/dev/null | grep -cvE '^(Last metadata|Obsoleting|Security:|$)')"
     set -e
     PENDING_SECURITY="${sec//[^0-9]/}"
     PENDING_SECURITY="${PENDING_SECURITY:-0}"
@@ -907,9 +907,8 @@ main() {
     exit 1
 }
 
-# When sourced by the test-suite we stop here and expose the functions above.
-if [[ -n "${PATCH_GREMLIN_SOURCE_ONLY:-}" ]]; then
-    return 0 2>/dev/null || true
+# When sourced by the test-suite, PATCH_GREMLIN_SOURCE_ONLY is set and we stop
+# here, exposing the functions above without running anything.
+if [[ -z "${PATCH_GREMLIN_SOURCE_ONLY:-}" ]]; then
+    main "$@"
 fi
-
-main "$@"

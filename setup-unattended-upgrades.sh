@@ -256,6 +256,7 @@ install_debian_updates() {
     backup_file /etc/apt/apt.conf.d/50unattended-upgrades
 
     local origins
+    # shellcheck disable=SC2016 # ${distro_codename} is apt's variable, kept literal
     if [[ "$UPDATE_TYPE" == "security" ]]; then
         origins='        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
         "origin=Debian,codename=${distro_codename}-security";
@@ -765,8 +766,11 @@ verify_install() {
     if [[ -f "$env_file" ]]; then
         local mode
         mode="$(stat -c '%a' "$env_file")"
-        [[ "$mode" == "600" ]] && ok "Secret environment file is mode 600" \
-                               || warn "Secret environment file is mode $mode, expected 600"
+        if [[ "$mode" == "600" ]]; then
+            ok "Secret environment file is mode 600"
+        else
+            warn "Secret environment file is mode $mode, expected 600"
+        fi
     fi
 }
 

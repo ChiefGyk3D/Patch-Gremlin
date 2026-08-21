@@ -5,23 +5,28 @@
 </div>
 
 Automated system update notifications for Debian and RHEL-based systems with
-Discord, Microsoft Teams, Slack, and Matrix support. Integrates with
-`unattended-upgrades` (Debian/Ubuntu) or `dnf-automatic` (RHEL/Fedora/Amazon
-Linux) to send notifications when security updates are installed.
+Discord, Microsoft Teams, Slack, Matrix, ntfy and Gotify support. Integrates
+with `unattended-upgrades` (Debian/Ubuntu) or `dnf-automatic`
+(RHEL/Fedora/Amazon Linux) to send notifications when security updates are
+installed.
+
+> **Upgrading from 1.x?** 2.0 changes how notifications are triggered and
+> where secrets are stored, and fixes a credential-exposure issue. Read
+> [CHANGELOG.md](CHANGELOG.md) and [SECURITY.md](SECURITY.md), then re-run the
+> installer.
 
 ## Features
 
-- 🔔 **Multi-Platform**: Send notifications to Discord, Microsoft Teams, Slack, and/or Matrix (any combination!)
-- 🔒 **Flexible Secrets**: Use Doppler for centralized management OR local file storage
-- 🎨 **Configurable**: Customize secret names and update schedules
-- ⚙️ **Automated**: Integrates with unattended-upgrades and systemd
-- 🔄 **Auto-Reboot**: Optional automatic reboot after kernel/critical updates (configurable during setup)
-- 🧠 **Intelligent**: Analyzes logs to distinguish between "5 packages updated" vs "no updates available"
-- 📊 **Informative**: Rich notifications with hostname, timezone-aware timestamps, and logs
-- 🌍 **Timezone-Aware**: Detects and configures system timezone during setup
-- 🔐 **Simple Auth**: Matrix uses username/password (no token generation needed)
-- 🖥️ **Multi-OS**: Supports Debian/Ubuntu and RHEL/Rocky/AlmaLinux/Amazon Linux/Fedora
-- 🔇 **Clean Logs**: Configurable verbosity (quiet by default)
+- 🔔 **Multi-Platform**: Discord, Microsoft Teams, Slack, Matrix, ntfy, Gotify and generic JSON webhooks — any combination
+- 🔒 **Secrets Done Right**: Doppler or a local file, always mode 600 and root-owned, loaded via systemd `EnvironmentFile=`
+- ⚙️ **Accurate Triggering**: Fires when the upgrade run actually finishes, so the report describes *that* run
+- 🔄 **Auto-Reboot**: Optional, with the reboot window derived from your update time
+- 🧠 **Intelligent**: Distinguishes "5 packages updated" from "12 still pending (3 security)" from "up to date"
+- 📊 **Monitoring-Ready**: Nagios/Icinga check, Prometheus exporter, and a machine-readable state file
+- 🌍 **Timezone-Aware**: Detects and configures the system timezone during setup
+- 🤖 **Automatable**: Every setting can come from the environment — no prompts required
+- 🖥️ **Multi-OS**: Debian/Ubuntu/Raspbian and RHEL/Rocky/AlmaLinux/Amazon Linux/Fedora
+- ✅ **Tested**: 91 automated tests running against six distributions in CI
 
 ## Quick Start
 
@@ -139,23 +144,61 @@ The setup script (`setup-unattended-upgrades.sh`) will interactively ask you abo
    - Matrix (webhook OR homeserver + username/password)
    - **At least one required**
 
-### Environment Variable Presets
+### Unattended Installation
 
-Skip interactive prompts by setting environment variables before running setup:
+Every setting can come from the environment. Pass `--non-interactive` and the
+installer never prompts — it fails fast with a clear message if something
+required is missing, which makes it safe to drive from Ansible or cloud-init.
 
 ```bash
-export UPDATE_TYPE="security"              # or "all"
-export UPDATE_SCHEDULE="daily"             # or "weekly"
-export UPDATE_DAY="Sat"                    # if weekly: Sun, Mon, Tue, Wed, Thu, Fri, Sat
-export UPDATE_TIME="02:00"                 # 24-hour format
-export SYSTEM_TIMEZONE="US/Eastern"        # or leave unset for current
-export VERBOSE_LOGGING="false"             # or "true" for debug
-export AUTO_REBOOT="true"                  # or "false" to disable auto-reboot
-export SECRET_MODE="local"                 # or "doppler"
-export DOPPLER_TOKEN="dp.st.xxx"           # if using Doppler mode
+sudo -E env \
+  UPDATE_TYPE=security \
+  UPDATE_SCHEDULE=daily \
+  UPDATE_TIME=03:30 \
+  SYSTEM_TIMEZONE=America/New_York \
+  AUTO_REBOOT=true \
+  REBOOT_WITH_USERS=false \
+  SECRET_MODE=local \
+  LOCAL_DISCORD_WEBHOOK='https://discord.com/api/webhooks/...' \
+  ./setup-unattended-upgrades.sh --non-interactive
+```
 
-# Run setup with presets
-sudo -E ./setup-unattended-upgrades.sh
+| Variable | Values | Default |
+| -------- | ------ | ------- |
+| `UPDATE_TYPE` | `security`, `all` | prompt |
+| `UPDATE_SCHEDULE` | `daily`, `weekly` | prompt |
+| `UPDATE_DAY` | `Sun`…`Sat` | `Sat` |
+| `UPDATE_TIME` | `HH:MM`, 24-hour | `02:00` |
+| `SYSTEM_TIMEZONE` | e.g. `Europe/Berlin` | unchanged |
+| `VERBOSE_LOGGING` | `true`, `false` | `false` |
+| `AUTO_REBOOT` | `true`, `false` | prompt |
+| `REBOOT_WITH_USERS` | `true`, `false` | `false` |
+| `ENABLE_HEARTBEAT` | `true`, `false` | `false` |
+| `SECRET_MODE` | `doppler`, `local` | prompt |
+| `DOPPLER_TOKEN` | `dp.st.…` | required for Doppler |
+
+Local-mode endpoints come from `LOCAL_DISCORD_WEBHOOK`, `LOCAL_SLACK_WEBHOOK`,
+`LOCAL_TEAMS_WEBHOOK`, `LOCAL_MATRIX_*`, `LOCAL_NTFY_*`, `LOCAL_GOTIFY_*` and
+`LOCAL_WEBHOOK_URL`. At least one is required. Run
+`./setup-unattended-upgrades.sh --help` for the full list.
+
+All values are validated **before** anything is written, so a malformed
+`UPDATE_TIME` is rejected rather than ending up inside a systemd unit.
+
+### When Notifications Fire
+
+Patch Gremlin hooks onto the upgrade unit itself
+(`ExecStartPost` on `apt-daily-upgrade.service` or `dnf-automatic.service`),
+so the notification always describes the run that just completed.
+
+A scheduled "heartbeat" report is also installed but **disabled by default**.
+Enable it with `ENABLE_HEARTBEAT=true` to get a report even on days when no
+upgrade ran; it is scheduled two hours after the upgrade window so it can
+never race it.
+
+```bash
+# Enable the heartbeat later
+sudo systemctl enable --now update-notifier.timer
 ```
 
 ### Customizing Doppler Secret Names
@@ -267,31 +310,42 @@ The script will automatically extract the localpart if needed.
 ### Quick Commands
 
 ```bash
-# Test notification (dry run - no actual sending)
-sudo PATCH_GREMLIN_DRY_RUN=true /usr/local/bin/update-notifier.sh
+# Test notification (dry run - nothing is sent)
+sudo /usr/local/bin/update-notifier.sh --dry-run
 
-# Send real test notification
+# Send a real test notification
 sudo /usr/local/bin/update-notifier.sh
 
-# Run comprehensive diagnostics
+# Comprehensive diagnostics
 sudo ./diagnose-config.sh
 
-# Quick health check (for monitoring)
-sudo ./health-check.sh
+# Health check (exit 0/1/2, for monitoring)
+sudo /usr/local/bin/patch-gremlin-health-check.sh
 
-# Full deployment test
-sudo ./test-deployment.sh
+# Full deployment test (exits non-zero if anything failed)
+sudo ./test-deployment.sh --skip-live
 
-# Toggle verbose logging
-sudo ./configure-verbosity.sh
+# Verbose logging on/off/show
+sudo ./configure-verbosity.sh --verbose
+sudo ./configure-verbosity.sh --quiet
+sudo ./configure-verbosity.sh --show
 
-# Check service status
-sudo systemctl status update-notifier.timer
-sudo systemctl list-timers update-notifier*
+# Machine-readable last-run state
+cat /var/lib/patch-gremlin/state
 
 # View logs
 sudo journalctl -t patch-gremlin --since "1 day ago"
 sudo journalctl -f -t patch-gremlin
+```
+
+### Running the Test Suite
+
+The project ships a sandboxed [bats](https://github.com/bats-core/bats-core)
+suite that never writes outside a temp directory or touches the network:
+
+```bash
+sudo apt-get install -y bats shellcheck
+bats tests/
 ```
 
 ### Monitoring Integration
@@ -299,13 +353,45 @@ sudo journalctl -f -t patch-gremlin
 #### Health Check (Exit Codes)
 
 ```bash
-sudo ./health-check.sh
+sudo /usr/local/bin/patch-gremlin-health-check.sh
 # 0 = Healthy
 # 1 = Warning (non-critical)
 # 2 = Critical (service broken)
 ```
 
-Perfect for Nagios, Zabbix, Icinga, etc.
+Use `--quiet` to suppress output and rely on the exit code alone.
+
+#### Nagios / Icinga
+
+```bash
+sudo cp monitoring/nagios-check.sh /usr/local/bin/
+/usr/local/bin/nagios-check.sh
+# OK - Patch Gremlin healthy | last_run_age_hours=3 status=updated pending=0 ...
+```
+
+#### Prometheus
+
+Write to the node_exporter textfile collector directory:
+
+```bash
+sudo cp monitoring/prometheus-exporter.sh /usr/local/bin/
+*/5 * * * * root /usr/local/bin/prometheus-exporter.sh \
+  > /var/lib/node_exporter/patch_gremlin.prom.tmp \
+  && mv /var/lib/node_exporter/patch_gremlin.prom.tmp \
+        /var/lib/node_exporter/patch_gremlin.prom
+```
+
+Exported metrics:
+
+| Metric | Meaning |
+| ------ | ------- |
+| `patch_gremlin_health` | 1 = healthy, 0 = unhealthy |
+| `patch_gremlin_last_run_timestamp_seconds` | Unix time of the last run |
+| `patch_gremlin_last_notification_success` | 1 if the last run delivered |
+| `patch_gremlin_packages_upgraded` | Packages upgraded in the last run |
+| `patch_gremlin_pending_updates` | Packages still awaiting upgrade |
+| `patch_gremlin_pending_security_updates` | Of those, security updates |
+| `patch_gremlin_status_info{status="…"}` | Last run status as a label |
 
 #### Diagnostics (Human-Readable)
 
@@ -329,47 +415,62 @@ Shows:
 ```
 /usr/local/bin/
 ├── update-notifier.sh                  # Main notification script
+└── patch-gremlin-health-check.sh       # Health check for monitoring
 
 /etc/update-notifier/
-├── secrets.conf                        # Local secrets (if using local mode)
-└── config.sh                           # Doppler config (if using Doppler mode)
+├── env                                 # Mode 600 - secrets / secret names
+└── secrets.conf                        # Mode 600 - local mode endpoints
+
+/var/lib/patch-gremlin/
+└── state                               # Last-run status, counts, timestamp
+
+/var/backups/patch-gremlin/             # Config backups (NOT in apt.conf.d)
 
 /etc/systemd/system/
-├── update-notifier.service             # Notification service
-├── update-notifier.timer               # Scheduled timer
+├── update-notifier.service             # Notification service (hardened)
+├── update-notifier.timer               # Optional heartbeat (off by default)
+├── apt-daily-upgrade.service.d/        # (Debian) ExecStartPost trigger
+│   └── patch-gremlin.conf
 └── apt-daily-upgrade.timer.d/          # (Debian) Schedule override
-    └── schedule.conf
+    └── patch-gremlin.conf
 
 /etc/apt/apt.conf.d/                    # (Debian only)
 ├── 20auto-upgrades                     # APT periodic config
-├── 50unattended-upgrades              # Unattended-upgrades config
-└── 99patch-gremlin-notification       # Post-upgrade hook
+└── 50unattended-upgrades               # Unattended-upgrades config
 
-/etc/dnf/automatic.conf                 # (RHEL only) DNF automatic config
-/etc/systemd/system/dnf-automatic.service.d/  # (RHEL only)
-└── patch-gremlin.conf                  # Post-upgrade hook
-
-/usr/local/bin/patch-gremlin-dnf-hook.sh      # (RHEL only) DNF hook script
+/etc/dnf/automatic.conf                 # (RHEL only)
+/etc/systemd/system/dnf-automatic.service.d/
+└── patch-gremlin.conf                  # (RHEL only) ExecStartPost trigger
 ```
 
 ### Repository Scripts
 
 ```bash
-setup-unattended-upgrades.sh    # Interactive installer
+setup-unattended-upgrades.sh    # Installer (interactive or --non-interactive)
 update-notifier.sh              # Notification script (copied to /usr/local/bin)
-uninstall.sh                    # Complete removal
-config.example.sh               # Template for Doppler custom secret names
+uninstall.sh                    # Removal (--all, --purge-backups)
+config.example.sh               # Template for Doppler secret-name overrides
 
 # User tools
 diagnose-config.sh              # Detailed diagnostics + troubleshooting
-health-check.sh                 # Simple monitoring (exit codes)
-configure-verbosity.sh          # Toggle debug logging on/off
-test-deployment.sh              # Comprehensive testing
+health-check.sh                 # Monitoring health check (exit 0/1/2)
+configure-verbosity.sh          # --quiet / --verbose / --show
+fix-verbose-now.sh              # Deprecated shim for --quiet
+test-deployment.sh              # On-host verification, exits non-zero on failure
 
-# Monitoring examples
+# Monitoring integrations
 monitoring/
-├── nagios-check.sh             # Nagios/Icinga integration
-└── prometheus-exporter.sh      # Prometheus metrics
+├── nagios-check.sh             # Nagios/Icinga check
+└── prometheus-exporter.sh      # Prometheus textfile-collector metrics
+
+# Tests
+tests/
+├── notifier.bats               # Log parsing, status, JSON payload validity
+├── setup.bats                  # Staged installs, validation, secret handling
+├── lifecycle.bats              # Install -> configure -> uninstall round trips
+├── monitoring.bats             # Health check + Nagios + Prometheus
+├── fixtures/                   # Real-format unattended-upgrades / dnf logs
+└── helpers/                    # curl, apt, dnf, systemctl stubs
 ```
 
 ## Advanced Configuration
@@ -380,13 +481,60 @@ Customize script behavior:
 
 ```bash
 # Testing
-PATCH_GREMLIN_DRY_RUN=true              # Test mode (no actual sending)
+PATCH_GREMLIN_DRY_RUN=true              # Build but never send (same as --dry-run)
+
+# Behaviour
+PATCH_GREMLIN_NOTIFY_ON=changes         # Stay quiet when nothing changed
+PATCH_GREMLIN_BOT_NAME="Patch Gremlin"  # Display name in notifications
+PATCH_GREMLIN_MAX_PACKAGE_NAMES=20      # Package names listed before "and N more"
 
 # Performance tuning
-PATCH_GREMLIN_MAX_LOG_LINES=100         # Log lines (default: 50)
+PATCH_GREMLIN_MAX_LOG_LINES=100         # Log lines inspected (default: 50)
 PATCH_GREMLIN_RETRY_COUNT=5             # HTTP retries (default: 3)
 PATCH_GREMLIN_RETRY_DELAY=5             # Retry delay seconds (default: 2)
 PATCH_GREMLIN_CURL_TIMEOUT=60           # HTTP timeout seconds (default: 30)
+
+# Paths (mainly for testing - see CONTRIBUTING.md)
+PATCH_GREMLIN_LOG_FILE=/path/to.log     # Override upgrade-log discovery
+PATCH_GREMLIN_SECRETS_FILE=/path        # Override the secrets file
+PATCH_GREMLIN_STATE_DIR=/path           # Override the state directory
+```
+
+Client-side retries stop early on a 4xx other than 429, since a rejected
+payload will not become valid on a retry.
+
+### Adding ntfy or Gotify
+
+```bash
+# ntfy (local mode)
+sudo -E env SECRET_MODE=local \
+  LOCAL_NTFY_URL='https://ntfy.sh' LOCAL_NTFY_TOPIC='my-servers' \
+  ./setup-unattended-upgrades.sh --non-interactive
+
+# Gotify
+sudo -E env SECRET_MODE=local \
+  LOCAL_GOTIFY_URL='https://gotify.example.com/message' \
+  LOCAL_GOTIFY_TOKEN='AxxxxxxxxxxxxxX' \
+  ./setup-unattended-upgrades.sh --non-interactive
+```
+
+### Generic JSON Webhook
+
+Set `LOCAL_WEBHOOK_URL` to receive a machine-readable payload instead of a
+chat-formatted message:
+
+```json
+{
+  "host": "web01",
+  "status": "updated",
+  "summary": "3 package(s) updated",
+  "detail": "✅ Updates Applied: 3 package(s)\n   libssl3, openssl, curl",
+  "upgraded_count": 3,
+  "pending_total": 12,
+  "pending_security": 2,
+  "timestamp": "2026-08-21T02:14:07.000Z",
+  "version": "2.0.0"
+}
 ```
 
 ### Adjusting Verbosity

@@ -1,8 +1,9 @@
+---
 name: Security Checks
 
 on:
   push:
-    branches: [main, develop, doppler_setup_fix]
+    branches: [main, develop]
   pull_request:
     branches: [main]
   schedule:
@@ -14,20 +15,6 @@ permissions:
   security-events: write
 
 jobs:
-  shellcheck:
-    name: ShellCheck Linting
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Run ShellCheck
-        uses: ludeeus/action-shellcheck@master
-        with:
-          scandir: '.'
-          severity: warning
-          ignore_paths: .git monitoring
-
   security-scan:
     name: Security Vulnerability Scan
     runs-on: ubuntu-latest
@@ -36,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -60,7 +47,7 @@ jobs:
           fetch-depth: 0  # Full history for better detection
 
       - name: Gitleaks Security Scan
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}

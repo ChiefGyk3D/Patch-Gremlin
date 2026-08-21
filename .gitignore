@@ -13,3 +13,7 @@ config.sh
 
 # Logs
 *.log
+
+# Test artifacts
+tests/**/*.tmp
+.bats-*

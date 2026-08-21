@@ -1,3 +1,4 @@
+---
 name: Release Management
 
 on:
@@ -21,8 +22,16 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
+          set -euo pipefail
           echo "## What's Changed" > CHANGELOG.txt
-          git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"- %s (%h)" >> CHANGELOG.txt
+          # `git describe HEAD^` fails on the very first tag - fall back to
+          # the full history instead of failing the release.
+          if prev="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null)"; then
+            range="${prev}..HEAD"
+          else
+            range="HEAD"
+          fi
+          git log "$range" --pretty=format:"- %s (%h)" >> CHANGELOG.txt
           cat CHANGELOG.txt
 
       - name: Create Release Archive
@@ -35,7 +44,7 @@ jobs:
             .
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           body_path: CHANGELOG.txt
           files: patch-gremlin-*.tar.gz
@@ -51,6 +60,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: The suite must pass before anything is released
+        run: bats --print-output-on-failure tests/
+
       - name: Verify all required files exist
         run: |
           echo "=== Verifying Release Contents ==="
@@ -65,6 +82,8 @@ jobs:
             "health-check.sh"
             "configure-verbosity.sh"
             "fix-verbose-now.sh"
+            "monitoring/nagios-check.sh"
+            "monitoring/prometheus-exporter.sh"
           )
 
           for file in "${required_files[@]}"; do
@@ -78,15 +97,16 @@ jobs:
 
       - name: Verify script executability
         run: |
-          echo "=== Checking Script Permissions ==="
-          for script in setup-unattended-upgrades.sh update-notifier.sh uninstall.sh; do
-            if [ -x "$script" ]; then
-              echo "✓ Executable: $script"
-            else
-              echo "⚠️  Making executable: $script"
-              chmod +x "$script"
+          set -euo pipefail
+          rc=0
+          for script in setup-unattended-upgrades.sh update-notifier.sh uninstall.sh \
+                        health-check.sh diagnose-config.sh configure-verbosity.sh; do
+            if [ ! -x "$script" ]; then
+              echo "::error file=$script::not executable in the tagged tree"
+              rc=1
             fi
           done
+          exit $rc
 
       - name: Generate release notes
         run: |

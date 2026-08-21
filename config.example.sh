@@ -1,42 +1,50 @@
 #!/bin/bash
-
-# Patch Gremlin - Configuration Template
-# Copy this file to config.sh and customize your Doppler secret names
+#
+# Patch Gremlin - Doppler secret-name overrides
+# Copy to config.sh and edit if your Doppler secrets are named differently.
 # https://github.com/ChiefGyk3D/Patch-Gremlin
+#
+# SECURITY NOTE
+# -------------
+# This file is PARSED, not executed. Only `KEY=VALUE` lines whose key appears
+# in the installer's allowlist are read, and values containing shell
+# metacharacters ($ ` ; & | < > ( )) are rejected rather than evaluated.
+#
+# That means command substitution does NOT work here. A previous version of
+# this template suggested `export DOPPLER_DISCORD_SECRET="$(hostname)_..."`,
+# which the old loader executed as root. If you want per-host secret names,
+# set the variable in the environment instead:
+#
+#   sudo -E env DOPPLER_DISCORD_SECRET="$(hostname)_UPDATE_DISCORD" \
+#        ./setup-unattended-upgrades.sh
+#
+# Values here are Doppler secret NAMES, never the secrets themselves.
 
-# Configure one or more messaging platforms (any combination works!)
+# --- Chat platforms -------------------------------------------------------
+export DOPPLER_DISCORD_SECRET="UPDATE_NOTIFIER_DISCORD_WEBHOOK"
+export DOPPLER_SLACK_SECRET="UPDATE_NOTIFIER_SLACK_WEBHOOK"
+export DOPPLER_TEAMS_SECRET="UPDATE_NOTIFIER_TEAMS_WEBHOOK"
 
-# Discord (webhook-based)
-export DOPPLER_DISCORD_SECRET="SYSTEM_UPDATE_DISCORD"
+# --- Matrix ---------------------------------------------------------------
+# Option 1: a custom webhook integration
+export DOPPLER_MATRIX_SECRET="UPDATE_NOTIFIER_MATRIX_WEBHOOK"
 
-# Microsoft Teams (webhook-based)
-export DOPPLER_TEAMS_SECRET="SYSTEM_UPDATE_TEAMS"
+# Option 2 (recommended): homeserver + a long-lived access token.
+# An access token avoids a fresh device being registered on every run.
+export DOPPLER_MATRIX_HOMESERVER_SECRET="UPDATE_NOTIFIER_MATRIX_HOMESERVER"
+export DOPPLER_MATRIX_TOKEN_SECRET="UPDATE_NOTIFIER_MATRIX_ACCESS_TOKEN"
+export DOPPLER_MATRIX_ROOM_ID_SECRET="UPDATE_NOTIFIER_MATRIX_ROOM_ID"
 
-# Slack (webhook-based)
-export DOPPLER_SLACK_SECRET="SYSTEM_UPDATE_SLACK"
+# Option 3: username + password (a device is created and logged out each run)
+export DOPPLER_MATRIX_USERNAME_SECRET="UPDATE_NOTIFIER_MATRIX_USERNAME"
+export DOPPLER_MATRIX_PASSWORD_SECRET="UPDATE_NOTIFIER_MATRIX_PASSWORD"
 
-# Matrix - Two methods available:
-# Method 1: Webhook (if you have a custom webhook integration)
-export DOPPLER_MATRIX_SECRET="SYSTEM_UPDATE_MATRIX"
+# --- Push / self-hosted ---------------------------------------------------
+export DOPPLER_NTFY_URL_SECRET="UPDATE_NOTIFIER_NTFY_URL"
+export DOPPLER_NTFY_TOPIC_SECRET="UPDATE_NOTIFIER_NTFY_TOPIC"
+export DOPPLER_NTFY_TOKEN_SECRET="UPDATE_NOTIFIER_NTFY_TOKEN"
+export DOPPLER_GOTIFY_URL_SECRET="UPDATE_NOTIFIER_GOTIFY_URL"
+export DOPPLER_GOTIFY_TOKEN_SECRET="UPDATE_NOTIFIER_GOTIFY_TOKEN"
 
-# Method 2: Matrix Client-Server API (recommended - requires 4 secrets)
-export DOPPLER_MATRIX_HOMESERVER_SECRET="MATRIX_HOMESERVER"
-export DOPPLER_MATRIX_USERNAME_SECRET="MATRIX_USERNAME"
-export DOPPLER_MATRIX_PASSWORD_SECRET="MATRIX_PASSWORD"
-export DOPPLER_MATRIX_ROOM_ID_SECRET="SYSTEM_UPDATE_MATRIX_ROOM"
-
-# Examples of custom naming:
-# export DOPPLER_DISCORD_SECRET="SYSUPDATE_DISCORD_WEBHOOK"
-# export DOPPLER_TEAMS_SECRET="SYSUPDATE_TEAMS_WEBHOOK"
-# export DOPPLER_SLACK_SECRET="SYSUPDATE_SLACK_WEBHOOK"
-
-# Or namespace by hostname:
-# export DOPPLER_DISCORD_SECRET="$(hostname)_UPDATE_DISCORD"
-# export DOPPLER_TEAMS_SECRET="$(hostname)_UPDATE_TEAMS"
-# export DOPPLER_SLACK_SECRET="$(hostname)_UPDATE_SLACK"
-
-# Or by environment:
-# export DOPPLER_DISCORD_SECRET="PROD_UPDATE_DISCORD"
-# export DOPPLER_TEAMS_SECRET="PROD_UPDATE_TEAMS"
-# export DOPPLER_SLACK_SECRET="PROD_UPDATE_SLACK"
-
+# --- Generic JSON webhook -------------------------------------------------
+export DOPPLER_WEBHOOK_SECRET="UPDATE_NOTIFIER_WEBHOOK_URL"
