@@ -1,46 +1,53 @@
 #!/bin/bash
-
+#
 # Nagios/Icinga check for Patch Gremlin
 # Returns: OK(0), WARNING(1), CRITICAL(2), UNKNOWN(3)
 
-HEALTH_SCRIPT="/usr/local/bin/patch-gremlin-health-check.sh"
-LAST_SUCCESS_HOURS=25  # Alert if no successful run in 25+ hours
+set -uo pipefail
 
-# Check if health script exists
+HEALTH_SCRIPT="${PATCH_GREMLIN_HEALTH_SCRIPT:-/usr/local/bin/patch-gremlin-health-check.sh}"
+STATE_DIR="${PATCH_GREMLIN_STATE_DIR:-/var/lib/patch-gremlin}"
+MAX_AGE_HOURS="${PATCH_GREMLIN_MAX_AGE_HOURS:-25}"
+
 if [[ ! -x "$HEALTH_SCRIPT" ]]; then
     echo "UNKNOWN - Health check script not found: $HEALTH_SCRIPT"
     exit 3
 fi
 
-# Run health check
-if ! output=$($HEALTH_SCRIPT 2>&1); then
-    exit_code=$?
-    case $exit_code in
-        1) echo "WARNING - $output"; exit 1 ;;
-        2) echo "CRITICAL - $output"; exit 2 ;;
-        *) echo "UNKNOWN - Health check failed with code $exit_code"; exit 3 ;;
-    esac
-fi
+# Capture status explicitly. `if ! cmd; then ... $? ...` reports the status of
+# the negation (always 0), so the previous version could only ever emit
+# UNKNOWN no matter what the health check returned.
+output="$("$HEALTH_SCRIPT" --quiet 2>&1)"
+rc=$?
 
-# Check last successful notification
-last_success=$(journalctl -t patch-gremlin --since "48 hours ago" | grep "SUCCESS: Notification delivery complete" | tail -1)
-if [[ -z "$last_success" ]]; then
-    echo "WARNING - No successful notifications in last 48 hours"
+case $rc in
+    0) ;;
+    1) echo "WARNING - ${output:-health check reported a warning}"; exit 1 ;;
+    2) echo "CRITICAL - ${output:-health check reported a failure}"; exit 2 ;;
+    *) echo "UNKNOWN - Health check exited with code $rc"; exit 3 ;;
+esac
+
+# Freshness, from the state file the notifier writes on every run.
+if [[ ! -r "$STATE_DIR/state" ]]; then
+    echo "WARNING - No Patch Gremlin state file at $STATE_DIR/state"
     exit 1
 fi
 
-# Extract timestamp and check age
-timestamp=$(echo "$last_success" | awk '{print $1" "$2" "$3}')
-if command -v date &>/dev/null; then
-    last_epoch=$(date -d "$timestamp" +%s 2>/dev/null || echo 0)
-    current_epoch=$(date +%s)
-    hours_ago=$(( (current_epoch - last_epoch) / 3600 ))
-    
-    if [[ $hours_ago -gt $LAST_SUCCESS_HOURS ]]; then
-        echo "WARNING - Last successful notification was $hours_ago hours ago"
-        exit 1
-    fi
+last_run_epoch=0
+last_status="unknown"
+# shellcheck source=/dev/null
+source "$STATE_DIR/state" 2>/dev/null || true
+
+if [[ "${last_run_epoch:-0}" -le 0 ]]; then
+    echo "WARNING - State file has no recorded run"
+    exit 1
 fi
 
-echo "OK - Patch Gremlin healthy, last success: $timestamp"
+age_hours=$(( ( $(date +%s) - last_run_epoch ) / 3600 ))
+if [[ $age_hours -gt $MAX_AGE_HOURS ]]; then
+    echo "WARNING - Last run was ${age_hours}h ago (threshold ${MAX_AGE_HOURS}h)"
+    exit 1
+fi
+
+echo "OK - Patch Gremlin healthy | last_run_age_hours=${age_hours} status=${last_status} pending=${pending_total:-0} pending_security=${pending_security:-0}"
 exit 0
