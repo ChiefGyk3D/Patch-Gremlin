@@ -88,13 +88,20 @@ rm -f "$(p /etc/systemd/system/update-notifier.service)" \
       "$(p /etc/systemd/system/update-notifier.timer)"
 
 # Drop-ins and hooks, current and legacy.
+# dnf5-automatic ships its own unit names, so an install on Fedora 41+ leaves
+# drop-ins under dnf5-automatic.*; remove both spellings.
 rm -f "$(p /etc/systemd/system/apt-daily-upgrade.service.d/patch-gremlin.conf)" \
       "$(p /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf)" \
+      "$(p /etc/systemd/system/dnf5-automatic.service.d/patch-gremlin.conf)" \
+      "$(p /etc/systemd/system/yum-cron.service.d/patch-gremlin.conf)" \
       "$(p /etc/apt/apt.conf.d/99patch-gremlin-notification)"
 rm -rf "$(p /etc/systemd/system/apt-daily-upgrade.timer.d)" \
-       "$(p /etc/systemd/system/dnf-automatic.timer.d)"
+       "$(p /etc/systemd/system/dnf-automatic.timer.d)" \
+       "$(p /etc/systemd/system/dnf5-automatic.timer.d)"
 for d in /etc/systemd/system/apt-daily-upgrade.service.d \
          /etc/systemd/system/dnf-automatic.service.d \
+         /etc/systemd/system/dnf5-automatic.service.d \
+         /etc/systemd/system/yum-cron.service.d \
          /etc/systemd/system/update-notifier.service.d; do
     rmdir "$(p "$d")" 2>/dev/null || true
 done
@@ -118,13 +125,15 @@ if [[ "$REMOVE_UPDATE_SYSTEM" == "true" ]]; then
     run_systemctl disable apt-daily-upgrade.timer
     run_systemctl stop dnf-automatic.timer
     run_systemctl disable dnf-automatic.timer
+    run_systemctl stop dnf5-automatic.timer
+    run_systemctl disable dnf5-automatic.timer
 
     if [[ -z "$PG_ROOT" ]]; then
         if command -v apt-get &>/dev/null; then
             apt-get remove -y unattended-upgrades 2>/dev/null || true
         fi
         if command -v dnf &>/dev/null; then
-            dnf remove -y dnf-automatic dnf5-automatic 2>/dev/null || true
+            dnf remove -y dnf-automatic dnf5-automatic dnf5-plugin-automatic 2>/dev/null || true
         elif command -v yum &>/dev/null; then
             yum remove -y yum-cron 2>/dev/null || true
         fi
@@ -153,6 +162,8 @@ else
     run_systemctl start apt-daily-upgrade.timer
     run_systemctl enable dnf-automatic.timer
     run_systemctl start dnf-automatic.timer
+    run_systemctl enable dnf5-automatic.timer
+    run_systemctl start dnf5-automatic.timer
     ok "Automatic updates left enabled"
 fi
 

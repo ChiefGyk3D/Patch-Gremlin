@@ -501,3 +501,59 @@ default_rhel_install() {
     [ "$status" -ne 0 ]
     [[ "$output" == *"PATCH_GREMLIN_OS_TYPE"* ]]
 }
+
+# --------------------------------------------------------------------------
+# dnf5-automatic unit naming
+#
+# Fedora 41+ installs dnf5-automatic, which ships dnf5-automatic.service and
+# dnf5-automatic.timer. The installer used to hardcode dnf-automatic.*, so on
+# those hosts the ExecStartPost hook and the schedule override were written
+# for units that do not exist and no notification was ever sent.
+# --------------------------------------------------------------------------
+
+@test "setup(rhel): dnf5-automatic hosts get dnf5-automatic drop-ins" {
+    install_rhel STUB_DNF5_AVAILABLE=1 \
+        UPDATE_TYPE=security UPDATE_SCHEDULE=daily UPDATE_TIME=02:00 \
+        SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=true \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc
+    [ "$status" -eq 0 ]
+    grep -q 'ExecStartPost=-/usr/local/bin/update-notifier.sh' \
+        "$ROOTDIR/etc/systemd/system/dnf5-automatic.service.d/patch-gremlin.conf"
+    [ -f "$ROOTDIR/etc/systemd/system/dnf5-automatic.timer.d/patch-gremlin.conf" ]
+    # and nothing is stranded on the unit that does not exist there
+    [ ! -e "$ROOTDIR/etc/systemd/system/dnf-automatic.service.d" ]
+    [ ! -e "$ROOTDIR/etc/systemd/system/dnf-automatic.timer.d" ]
+    grep -q 'systemctl enable --now dnf5-automatic.timer' "$ROOTDIR/systemctl.log"
+}
+
+@test "setup(rhel): EL9 without dnf5-automatic still targets dnf-automatic" {
+    default_rhel_install
+    [ "$status" -eq 0 ]
+    [ -f "$ROOTDIR/etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf" ]
+    [ ! -e "$ROOTDIR/etc/systemd/system/dnf5-automatic.service.d" ]
+    grep -q 'systemctl enable --now dnf-automatic.timer' "$ROOTDIR/systemctl.log"
+}
+
+@test "setup(rhel): PATCH_GREMLIN_AUTOMATIC_UNIT overrides detection" {
+    install_rhel PATCH_GREMLIN_AUTOMATIC_UNIT=dnf5-automatic \
+        UPDATE_TYPE=security UPDATE_SCHEDULE=daily UPDATE_TIME=02:00 \
+        SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=true \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc
+    [ "$status" -eq 0 ]
+    [ -f "$ROOTDIR/etc/systemd/system/dnf5-automatic.service.d/patch-gremlin.conf" ]
+}
+
+@test "uninstall: removes drop-ins for both dnf spellings" {
+    install_rhel STUB_DNF5_AVAILABLE=1 \
+        UPDATE_TYPE=security UPDATE_SCHEDULE=daily UPDATE_TIME=02:00 \
+        SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=true \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc
+    [ "$status" -eq 0 ]
+    [ -f "$ROOTDIR/etc/systemd/system/dnf5-automatic.service.d/patch-gremlin.conf" ]
+
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        bash "$REPO_ROOT/uninstall.sh" --non-interactive
+    [ "$status" -eq 0 ]
+    [ ! -e "$ROOTDIR/etc/systemd/system/dnf5-automatic.service.d/patch-gremlin.conf" ]
+    [ ! -e "$ROOTDIR/etc/systemd/system/dnf5-automatic.timer.d" ]
+}

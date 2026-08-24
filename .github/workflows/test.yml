@@ -131,8 +131,16 @@ jobs:
 
           test -f "$root/etc/dnf/automatic.conf"
           grep -q '^upgrade_type = security' "$root/etc/dnf/automatic.conf"
-          grep -q 'ExecStartPost=-/usr/local/bin/update-notifier.sh' \
-            "$root/etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf"
+          # The unit is dnf-automatic.* on EL9 and dnf5-automatic.* on Fedora
+          # 41+, so assert on whichever the installer picked rather than
+          # hardcoding one and passing only on half the matrix.
+          hook="$(find "$root/etc/systemd/system" -path '*automatic.service.d/patch-gremlin.conf')"
+          test -n "$hook"
+          echo "hooked: ${hook#"$root"}"
+          grep -q 'ExecStartPost=-/usr/local/bin/update-notifier.sh' "$hook"
+          timer="$(find "$root/etc/systemd/system" -path '*automatic.timer.d/patch-gremlin.conf')"
+          test -n "$timer"
+          grep -q 'OnCalendar=Tue' "$timer"
           test ! -e "$root/etc/apt"
 
           PATCH_GREMLIN_ROOT="$root" ./uninstall.sh --non-interactive

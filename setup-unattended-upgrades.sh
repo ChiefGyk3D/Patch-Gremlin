@@ -232,14 +232,80 @@ detect_os() {
     fi
 }
 
+# Fedora 41+ ships the dnf5 plugin. The PACKAGE is dnf5-plugin-automatic -
+# there is no package called "dnf5-automatic", which is what this used to look
+# for, so the check never matched and the installer always fell through to
+# dnf-automatic. The plugin installs dnf5-automatic.service/.timer and reads
+# the same /etc/dnf/automatic.conf.
 automatic_package_name() {
     if [[ "$PACKAGE_MANAGER" == "yum" ]]; then
         echo "yum-cron"
-    elif "$PACKAGE_MANAGER" list --available dnf5-automatic &>/dev/null; then
-        echo "dnf5-automatic"
-    else
-        echo "dnf-automatic"
+        return 0
     fi
+    local c
+    for c in dnf5-plugin-automatic dnf5-automatic dnf-automatic; do
+        if "$PACKAGE_MANAGER" list --available "$c" &>/dev/null; then
+            echo "$c"
+            return 0
+        fi
+    done
+    echo "dnf-automatic"
+}
+
+# Package name -> systemd unit base. They differ: dnf5-plugin-automatic ships
+# units called dnf5-automatic.*.
+automatic_unit_for_package() {
+    case "$1" in
+        yum-cron)                          echo "yum-cron" ;;
+        dnf5-plugin-automatic|dnf5-automatic) echo "dnf5-automatic" ;;
+        *)                                 echo "dnf-automatic" ;;
+    esac
+}
+
+# The systemd units are named after the PACKAGE: dnf5-automatic ships
+# dnf5-automatic.service and dnf5-automatic.timer, not dnf-automatic.*.
+# Hardcoding dnf-automatic meant that on Fedora 41+ - where dnf5-automatic is
+# what actually gets installed - the ExecStartPost drop-in and the schedule
+# override were written for units that do not exist, and
+# `enable --now dnf-automatic.timer` failed. Automatic updates ran on the
+# distro default schedule and no notification was ever sent.
+AUTOMATIC_PACKAGE=""
+AUTOMATIC_UNIT=""
+
+resolve_automatic_units() {
+    [[ -n "$AUTOMATIC_PACKAGE" ]] || AUTOMATIC_PACKAGE="$(automatic_package_name)"
+
+    if [[ -n "${PATCH_GREMLIN_AUTOMATIC_UNIT:-}" ]]; then
+        AUTOMATIC_UNIT="$PATCH_GREMLIN_AUTOMATIC_UNIT"
+        return 0
+    fi
+
+    local preferred candidates=()
+    preferred="$(automatic_unit_for_package "$AUTOMATIC_PACKAGE")"
+    case "$preferred" in
+        yum-cron)       candidates=(yum-cron) ;;
+        dnf5-automatic) candidates=(dnf5-automatic dnf-automatic) ;;
+        *)              candidates=(dnf-automatic dnf5-automatic) ;;
+    esac
+
+    # On a live system prefer whichever unit is genuinely present, so a
+    # mis-detected package name cannot strand the drop-in on a phantom unit.
+    if [[ -z "$PG_ROOT" ]] && command -v systemctl &>/dev/null; then
+        local c
+        for c in "${candidates[@]}"; do
+            if systemctl cat "${c}.service" &>/dev/null; then
+                AUTOMATIC_UNIT="$c"
+                return 0
+            fi
+        done
+    fi
+    AUTOMATIC_UNIT="${candidates[0]}"
+}
+
+# yum-cron has no systemd timer - it is driven by /etc/cron.daily - so the
+# schedule override and `enable --now` only apply where a timer exists.
+automatic_has_timer() {
+    [[ "$AUTOMATIC_UNIT" != "yum-cron" ]]
 }
 
 backup_file() {
@@ -351,6 +417,11 @@ install_rhel_updates() {
         say "${YELLOW}Installing ${pkg}...${NC}"
         "$PACKAGE_MANAGER" install -y "$pkg"
     fi
+    # Resolve units only now: with the package installed, the systemctl probe
+    # inside resolve_automatic_units can see which unit genuinely exists
+    # rather than guessing from the package name alone.
+    AUTOMATIC_PACKAGE="$pkg"
+    resolve_automatic_units
 
     backup_file /etc/dnf/automatic.conf
 
@@ -373,16 +444,21 @@ emit_via = stdio
 debuglevel = 1
 EOF
 
-    write_file /etc/systemd/system/dnf-automatic.timer.d/patch-gremlin.conf 644 <<EOF
+    if automatic_has_timer; then
+        write_file "/etc/systemd/system/${AUTOMATIC_UNIT}.timer.d/patch-gremlin.conf" 644 <<EOF
 # Managed by Patch Gremlin
 [Timer]
 OnCalendar=
 OnCalendar=$(oncalendar_expression)
 RandomizedDelaySec=30min
 EOF
-
-    run_systemctl daemon-reload
-    run_systemctl enable --now dnf-automatic.timer
+        run_systemctl daemon-reload
+        run_systemctl enable --now "${AUTOMATIC_UNIT}.timer"
+    else
+        run_systemctl daemon-reload
+        run_systemctl enable "${AUTOMATIC_UNIT}.service"
+        warn "${AUTOMATIC_PACKAGE} has no systemd timer; the schedule is whatever /etc/cron.daily uses"
+    fi
     ok "Configured ${pkg} (${UPDATE_TYPE}, ${UPDATE_SCHEDULE} at ${UPDATE_TIME})"
 }
 
@@ -447,6 +523,13 @@ DOPPLER_MATRIX_HOMESERVER_SECRET=${DOPPLER_MATRIX_HOMESERVER_SECRET}
 DOPPLER_MATRIX_USERNAME_SECRET=${DOPPLER_MATRIX_USERNAME_SECRET}
 DOPPLER_MATRIX_PASSWORD_SECRET=${DOPPLER_MATRIX_PASSWORD_SECRET}
 DOPPLER_MATRIX_ROOM_ID_SECRET=${DOPPLER_MATRIX_ROOM_ID_SECRET}
+DOPPLER_MATRIX_TOKEN_SECRET=${DOPPLER_MATRIX_TOKEN_SECRET}
+DOPPLER_NTFY_URL_SECRET=${DOPPLER_NTFY_URL_SECRET}
+DOPPLER_NTFY_TOPIC_SECRET=${DOPPLER_NTFY_TOPIC_SECRET}
+DOPPLER_NTFY_TOKEN_SECRET=${DOPPLER_NTFY_TOKEN_SECRET}
+DOPPLER_GOTIFY_URL_SECRET=${DOPPLER_GOTIFY_URL_SECRET}
+DOPPLER_GOTIFY_TOKEN_SECRET=${DOPPLER_GOTIFY_TOKEN_SECRET}
+DOPPLER_WEBHOOK_SECRET=${DOPPLER_WEBHOOK_SECRET}
 EOF
         ok "Wrote /etc/update-notifier/env (mode 600, root only)"
     fi
@@ -511,7 +594,8 @@ EOF
     if [[ "$OS_TYPE" == "debian" ]]; then
         upgrade_unit="apt-daily-upgrade.service"
     else
-        upgrade_unit="dnf-automatic.service"
+        [[ -n "$AUTOMATIC_UNIT" ]] || resolve_automatic_units
+        upgrade_unit="${AUTOMATIC_UNIT}.service"
     fi
 
     write_file "/etc/systemd/system/${upgrade_unit}.d/patch-gremlin.conf" 644 <<EOF
@@ -572,12 +656,15 @@ remove_legacy_artifacts() {
         rm -f "$hook"
         ok "Removed legacy APT Dpkg::Post-Invoke hook (fired on every apt run)"
     fi
-    local old_dnf
-    old_dnf="$(p /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf)"
-    if [[ -f "$old_dnf" ]] && grep -q 'DOPPLER_TOKEN' "$old_dnf" 2>/dev/null; then
-        rm -f "$old_dnf"
-        ok "Removed legacy dnf drop-in containing an inline Doppler token"
-    fi
+    # Both dnf spellings: an install on Fedora 41+ lands under dnf5-automatic.
+    local stale
+    for stale in "$(p /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf)" \
+                 "$(p /etc/systemd/system/dnf5-automatic.service.d/patch-gremlin.conf)"; do
+        if [[ -f "$stale" ]] && grep -q 'DOPPLER_TOKEN' "$stale" 2>/dev/null; then
+            rm -f "$stale"
+            ok "Removed legacy dnf drop-in containing an inline Doppler token"
+        fi
+    done
     # Old backups dumped into apt.conf.d make APT warn on every invocation.
     local d
     d="$(p /etc/apt/apt.conf.d)"
@@ -829,6 +916,18 @@ main() {
     DOPPLER_MATRIX_USERNAME_SECRET="${DOPPLER_MATRIX_USERNAME_SECRET:-UPDATE_NOTIFIER_MATRIX_USERNAME}"
     DOPPLER_MATRIX_PASSWORD_SECRET="${DOPPLER_MATRIX_PASSWORD_SECRET:-UPDATE_NOTIFIER_MATRIX_PASSWORD}"
     DOPPLER_MATRIX_ROOM_ID_SECRET="${DOPPLER_MATRIX_ROOM_ID_SECRET:-UPDATE_NOTIFIER_MATRIX_ROOM_ID}"
+    # These seven were accepted by CONFIG_ALLOWLIST and advertised in
+    # config.example.sh, but were never defaulted here nor written to the env
+    # file - so a custom Doppler secret name for Matrix access tokens, ntfy,
+    # Gotify or the generic webhook was silently discarded after setup had
+    # reported it loaded.
+    DOPPLER_MATRIX_TOKEN_SECRET="${DOPPLER_MATRIX_TOKEN_SECRET:-UPDATE_NOTIFIER_MATRIX_ACCESS_TOKEN}"
+    DOPPLER_NTFY_URL_SECRET="${DOPPLER_NTFY_URL_SECRET:-UPDATE_NOTIFIER_NTFY_URL}"
+    DOPPLER_NTFY_TOPIC_SECRET="${DOPPLER_NTFY_TOPIC_SECRET:-UPDATE_NOTIFIER_NTFY_TOPIC}"
+    DOPPLER_NTFY_TOKEN_SECRET="${DOPPLER_NTFY_TOKEN_SECRET:-UPDATE_NOTIFIER_NTFY_TOKEN}"
+    DOPPLER_GOTIFY_URL_SECRET="${DOPPLER_GOTIFY_URL_SECRET:-UPDATE_NOTIFIER_GOTIFY_URL}"
+    DOPPLER_GOTIFY_TOKEN_SECRET="${DOPPLER_GOTIFY_TOKEN_SECRET:-UPDATE_NOTIFIER_GOTIFY_TOKEN}"
+    DOPPLER_WEBHOOK_SECRET="${DOPPLER_WEBHOOK_SECRET:-UPDATE_NOTIFIER_WEBHOOK_URL}"
 
     # --update-only refreshes scripts AND units/hooks. The old option 2 copied
     # only update-notifier.sh, so a version that changed the unit layout left

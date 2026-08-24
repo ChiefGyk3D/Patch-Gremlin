@@ -38,6 +38,9 @@ Every behavioural change needs a test. Two mechanisms make that possible:
 - **`PATCH_GREMLIN_SOURCE_ONLY=1`** — makes `update-notifier.sh` define its
   functions and return without running `main`, so individual functions can be
   unit-tested.
+- **`PATCH_GREMLIN_AUTOMATIC_UNIT=dnf-automatic|dnf5-automatic`** — forces the
+  RHEL systemd unit base, bypassing package detection. Lets the suite cover
+  both the EL9 and Fedora 41+ unit layouts on one host.
 - **`PATCH_GREMLIN_OS_TYPE=debian|rhel`** — forces the package-family branch in
   both the installer and the notifier. Without it, tests asserting apt paths
   quietly depended on whichever family the host belonged to and failed on

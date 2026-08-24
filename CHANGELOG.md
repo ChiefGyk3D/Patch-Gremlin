@@ -63,6 +63,20 @@ the new secret layout and trigger wiring are applied.
   `UPDATE_DAY: unbound variable`, after the APT config had been rewritten.
 - `SYSTEM_TIMEZONE` was documented but the preset path never applied it.
 - `VERSION_ID` is unset on Debian testing/sid and aborted OS detection.
+- **Notifications never fired on Fedora 41+.** The installer hardcoded
+  `dnf-automatic.service` / `.timer`, but Fedora 41 ships
+  `dnf5-plugin-automatic`, whose units are `dnf5-automatic.*`. The
+  `ExecStartPost` hook and schedule override were written for units that do not
+  exist there, and `systemctl enable --now dnf-automatic.timer` failed. The
+  unit is now derived from the package actually installed and confirmed
+  against `systemctl` on a live host; `PATCH_GREMLIN_AUTOMATIC_UNIT` overrides
+  it. Package detection also looked for a package named `dnf5-automatic`,
+  which does not exist in any Fedora release.
+- **Custom Doppler secret names were silently discarded.** `config.example.sh`
+  documents seven overrides for Matrix access tokens, ntfy, Gotify and the
+  generic webhook. Setup's allowlist accepted them and reported them loaded,
+  then never wrote them to `/etc/update-notifier/env`, so the notifier fell
+  back to its default names and those platforms went quiet.
 - A bare `$(hostname)` aborted the notifier under `set -e` on minimal
   Fedora/RHEL images, where `hostname` is a separate package and not installed.
   Resolution now falls back through `hostnamectl`, `$HOSTNAME`,
