@@ -486,6 +486,7 @@ PATCH_GREMLIN_DRY_RUN=true              # Build but never send (same as --dry-ru
 # Behaviour
 PATCH_GREMLIN_NOTIFY_ON=changes         # Stay quiet when nothing changed
 PATCH_GREMLIN_BOT_NAME="Patch Gremlin"  # Display name in notifications
+PATCH_GREMLIN_HOSTNAME=web01.example.com # Override the reported host name
 PATCH_GREMLIN_MAX_PACKAGE_NAMES=20      # Package names listed before "and N more"
 
 # Performance tuning

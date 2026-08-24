@@ -63,6 +63,11 @@ the new secret layout and trigger wiring are applied.
   `UPDATE_DAY: unbound variable`, after the APT config had been rewritten.
 - `SYSTEM_TIMEZONE` was documented but the preset path never applied it.
 - `VERSION_ID` is unset on Debian testing/sid and aborted OS detection.
+- A bare `$(hostname)` aborted the notifier under `set -e` on minimal
+  Fedora/RHEL images, where `hostname` is a separate package and not installed.
+  Resolution now falls back through `hostnamectl`, `$HOSTNAME`,
+  `/proc/sys/kernel/hostname` and `/etc/hostname`, and
+  `PATCH_GREMLIN_HOSTNAME` overrides it.
 - `grep -c … || echo "0"` produced `"0\n0"` in `test-deployment.sh` and
   emitted an unparseable Prometheus metric in the exporter.
 - `curl … || echo "\n000"` emitted a literal backslash-n, causing a bash

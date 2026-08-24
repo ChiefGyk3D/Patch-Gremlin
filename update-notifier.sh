@@ -79,6 +79,7 @@ Environment:
   PATCH_GREMLIN_RETRY_DELAY=2         Seconds between retries
   PATCH_GREMLIN_CURL_TIMEOUT=30       HTTP timeout in seconds
   PATCH_GREMLIN_BOT_NAME="Patch Gremlin"
+  PATCH_GREMLIN_HOSTNAME=web01         Override the reported host name
 
 Secrets are read from Doppler or ${SECRETS_FILE}.
 EOF
@@ -153,6 +154,34 @@ detect_os_type() {
     else
         printf 'debian'
     fi
+}
+
+# `hostname` is NOT part of coreutils - it lives in a separate package and is
+# absent from minimal Fedora/RHEL images and many slim containers. The bare
+# `$(hostname)` call this replaces aborted the whole notifier under `set -e`
+# on exactly those hosts. The bats suite could not catch it because the tests
+# stub hostname on PATH; the container smoke test did.
+resolve_hostname() {
+    if [[ -n "${PATCH_GREMLIN_HOSTNAME:-}" ]]; then
+        printf '%s' "$PATCH_GREMLIN_HOSTNAME"
+        return 0
+    fi
+    local h=""
+    if command -v hostname >/dev/null 2>&1; then
+        h="$(hostname 2>/dev/null || true)"
+    fi
+    if [[ -z "$h" ]] && command -v hostnamectl >/dev/null 2>&1; then
+        h="$(hostnamectl --static 2>/dev/null || true)"
+    fi
+    # Bash sets HOSTNAME itself; /proc and /etc are the last resorts.
+    [[ -n "$h" ]] || h="${HOSTNAME:-}"
+    if [[ -z "$h" && -r /proc/sys/kernel/hostname ]]; then
+        read -r h < /proc/sys/kernel/hostname || h=""
+    fi
+    if [[ -z "$h" && -r /etc/hostname ]]; then
+        read -r h < /etc/hostname || h=""
+    fi
+    printf '%s' "${h:-unknown-host}"
 }
 
 detect_log_file() {
@@ -849,7 +878,7 @@ main() {
 
     OS_TYPE="$(detect_os_type)"
     LOG_FILE="$(detect_log_file "$OS_TYPE")"
-    HOST_NAME="$(hostname)"
+    HOST_NAME="$(resolve_hostname)"
     LAST_RUN="$(date '+%Y-%m-%d %H:%M:%S %Z')"
     LAST_RUN_UTC="$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')"
 

@@ -453,3 +453,95 @@ MATRIX_ROOM_ID="!room:example.org"'
     [ "$status" -ne 0 ]
     [[ "$output" == *"All notification attempts failed"* ]]
 }
+
+# --------------------------------------------------------------------------
+# hostname resolution
+#
+# `hostname` is not coreutils: it is absent from minimal Fedora/RHEL images.
+# A bare $(hostname) aborted the whole notifier under `set -e` there. These
+# tests deliberately build a PATH WITHOUT the hostname stub, because the stub
+# is what hid this bug from the suite in the first place.
+# --------------------------------------------------------------------------
+
+# A complete, self-contained PATH that deliberately lacks hostname and
+# hostnamectl: the command stubs plus symlinks to the real utilities the
+# notifier needs. Simulating absence by trimming the system PATH is the only
+# way to reproduce the minimal-image failure, since this host has hostname.
+helpers_without_hostname() {
+    local dir="$SANDBOX/nohost"
+    mkdir -p "$dir"
+    local f base
+    for f in "$HELPERS"/*; do
+        base="$(basename "$f")"
+        [[ "$base" == "hostname" || "$base" == "hostnamectl" ]] && continue
+        cp "$f" "$dir/"
+    done
+    local b path
+    for b in bash env date grep sed awk tail head tr wc cut sort comm mktemp \
+             rm cat paste stat find sleep mkdir cp chmod id flock python3 \
+             dirname basename; do
+        [[ -e "$dir/$b" ]] && continue
+        path="$(command -v "$b" 2>/dev/null || true)"
+        [[ -n "$path" ]] && ln -sf "$path" "$dir/$b"
+    done
+    # Sanity: the point of this helper is that hostname is NOT reachable.
+    if PATH="$dir" command -v hostname >/dev/null 2>&1; then
+        echo "helpers_without_hostname: hostname still reachable" >&2
+        return 1
+    fi
+    printf '%s' "$dir"
+}
+
+@test "resolve_hostname: falls back when the hostname binary is missing" {
+    load_notifier
+    # A PATH with no hostname and no hostnamectl at all.
+    result="$(PATH="$SANDBOX" HOSTNAME=fallback-host resolve_hostname)"
+    [ -n "$result" ]
+    [ "$result" != "unknown-host" ]
+    [ "$result" = "fallback-host" ]
+}
+
+@test "resolve_hostname: never returns empty, even with nothing to go on" {
+    load_notifier
+    result="$(PATH="$SANDBOX" HOSTNAME="" resolve_hostname)"
+    [ -n "$result" ]
+}
+
+@test "resolve_hostname: PATCH_GREMLIN_HOSTNAME wins" {
+    load_notifier
+    result="$(PATCH_GREMLIN_HOSTNAME=web01.example.com resolve_hostname)"
+    [ "$result" = "web01.example.com" ]
+}
+
+@test "e2e: notifier works on a host with no hostname binary" {
+    # Reproduces the fedora:41 CI failure: the notifier died with
+    # "hostname: command not found" before sending anything.
+    nohost="$(helpers_without_hostname)"
+    write_secrets 'DISCORD_WEBHOOK="https://discord.com/api/webhooks/1/abc"'
+    run env PATH="$nohost" \
+        STUB_CAPTURE_DIR="$STUB_CAPTURE_DIR" \
+        PATCH_GREMLIN_SECRETS_FILE="$PATCH_GREMLIN_SECRETS_FILE" \
+        PATCH_GREMLIN_CONFIG_FILE="$PATCH_GREMLIN_CONFIG_FILE" \
+        PATCH_GREMLIN_ENV_FILE="$SANDBOX/nonexistent-env" \
+        PATCH_GREMLIN_STATE_DIR="$PATCH_GREMLIN_STATE_DIR" \
+        PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-upgraded.log" \
+        PATCH_GREMLIN_OS_TYPE=debian \
+        bash "$REPO_ROOT/update-notifier.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"hostname: command not found"* ]]
+    assert_payloads_valid_json
+    title="$(payload_field "$STUB_CAPTURE_DIR/payload-1" embeds.0.title)"
+    [[ "$title" == *"Updates Applied"* ]]
+    # A real host name still made it into the notification.
+    [[ -n "$title" ]]
+}
+
+@test "e2e: PATCH_GREMLIN_HOSTNAME appears in the notification title" {
+    write_secrets 'DISCORD_WEBHOOK="https://discord.com/api/webhooks/1/abc"'
+    run_notifier PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-upgraded.log" \
+                 PATCH_GREMLIN_OS_TYPE=debian \
+                 PATCH_GREMLIN_HOSTNAME=web01.example.com
+    [ "$status" -eq 0 ]
+    title="$(payload_field "$STUB_CAPTURE_DIR/payload-1" embeds.0.title)"
+    [[ "$title" == *"web01.example.com"* ]]
+}
