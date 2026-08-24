@@ -1,0 +1,40 @@
+#!/bin/bash
+# Stub dnf. Two behaviours matter to the suite:
+#
+#   check-update            - pending-update reporting.
+#   list --available <pkg>  - package availability, which decides whether the
+#                             installer targets dnf-automatic or dnf5-automatic
+#                             units.
+#
+# Two repo layouts are modelled:
+#   default                 - EL9/Rocky: dnf-automatic exists, no dnf5 plugin.
+#   STUB_DNF5_AVAILABLE=1   - Fedora 41+: dnf5-plugin-automatic exists (which
+#                             ships dnf5-automatic.*), dnf-automatic does not.
+if [[ "$1" == "check-update" ]]; then
+  if [[ -n "${STUB_UPGRADABLE:-}" ]]; then
+    for p in ${STUB_UPGRADABLE:-}; do echo "$p.x86_64   1.2-3   updates"; done
+    exit 100
+  fi
+  exit 0
+fi
+
+if [[ "$1" == "list" ]]; then
+  for arg in "$@"; do
+    case "$arg" in
+      dnf5-plugin-automatic|dnf5-automatic)
+        [[ "${STUB_DNF5_AVAILABLE:-0}" == "1" ]] && exit 0
+        echo "Error: No matching Packages to list" >&2
+        exit 1
+        ;;
+      dnf-automatic)
+        [[ "${STUB_DNF5_AVAILABLE:-0}" == "1" ]] && {
+          echo "Error: No matching Packages to list" >&2
+          exit 1
+        }
+        exit 0
+        ;;
+    esac
+  done
+  exit 0
+fi
+exit 0

@@ -1,23 +1,57 @@
 # Testing Guide for Patch Gremlin
 
-## Quick Start Testing
+There are two layers of testing:
 
-### 1. Run the Automated Test Suite
+1. **The developer suite** (`bats tests/`) — runs anywhere, sandboxed, no root
+   and no network required. Use this while changing the code.
+2. **On-host verification** (`test-deployment.sh`) — checks a real
+   installation on a real server.
+
+## 1. The Developer Suite
 
 ```bash
-sudo bash test-deployment.sh
-```text
+sudo apt-get install -y bats shellcheck   # or dnf install -y bats ShellCheck
+./tests/run.sh
+shellcheck -x -S style $(find . -name '*.sh' -not -path './.git/*')
+```
 
-This will check:
+107 tests cover log parsing against real-format fixtures, status
+classification, JSON payload validity under hostile input, staged installs and
+uninstalls, secret permissions, and the monitoring integrations. Nothing is
+written outside a temporary directory and no network call is made — `curl`,
+`apt`, `dnf` and `systemctl` are stubbed in `tests/helpers/`.
 
-- ✅ Installation completeness
-- ✅ Secret storage configuration
-- ✅ Systemd services status
-- ✅ Timer schedules
-- ✅ Manual notification test
-- ✅ Update system configuration
-- ✅ Hook execution
-- ✅ Log analysis
+Run a single file or a single test:
+
+```bash
+bats tests/notifier.bats
+bats tests/setup.bats --filter "reboot time"
+```
+
+Both the Debian and RHEL installer branches are covered on any host, because
+the tests pin `PATCH_GREMLIN_OS_TYPE` rather than inheriting the host's
+package family.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how `PATCH_GREMLIN_ROOT` and
+`PATCH_GREMLIN_SOURCE_ONLY` make the scripts testable.
+
+## 2. On-Host Verification
+
+```bash
+sudo ./test-deployment.sh --skip-live     # no notification is sent
+sudo ./test-deployment.sh --yes           # sends one real notification
+```
+
+Exits non-zero if any check failed. It checks:
+
+- ✅ Installation completeness (including the health-check script)
+- ✅ Secret storage mode and file permissions
+- ✅ That no world-readable file contains a Doppler token
+- ✅ That no legacy `Dpkg::Post-Invoke` hook remains
+- ✅ Systemd timer state and notifier wiring
+- ✅ A notifier dry run
+- ✅ Pending-update counts
+- ✅ Optionally, one live notification
 
 ---
 
@@ -31,12 +65,18 @@ ls -la /usr/local/bin/update-notifier.sh
 ls -la /etc/systemd/system/update-notifier.service
 ls -la /etc/systemd/system/update-notifier.timer
 
-# Debian/Ubuntu - check APT hook
-cat /etc/apt/apt.conf.d/99patch-gremlin-notification
+# The health-check script both monitoring integrations use
+ls -la /usr/local/bin/patch-gremlin-health-check.sh
 
-# RHEL/Rocky - check DNF hook
+# Debian/Ubuntu - the notifier hangs off the upgrade unit
+cat /etc/systemd/system/apt-daily-upgrade.service.d/patch-gremlin.conf
+
+# RHEL/Rocky
 cat /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf
-```text
+
+# There should be NO legacy APT hook (it fired on every apt command)
+test ! -f /etc/apt/apt.conf.d/99patch-gremlin-notification && echo "clean"
+```
 
 ### Test 2: Check Secret Configuration
 
@@ -49,7 +89,7 @@ ls -la /etc/update-notifier/secrets.conf
 
 # View (as root)
 sudo cat /etc/update-notifier/secrets.conf
-```text
+```
 
 **For Doppler Mode:**
 
@@ -62,7 +102,7 @@ sudo -i
 export DOPPLER_TOKEN="your-token-here"
 doppler secrets get SYSTEM_UPDATE_DISCORD
 exit
-```text
+```
 
 ### Test 3: Check Systemd Services
 
@@ -78,7 +118,7 @@ sudo systemctl is-enabled update-notifier.timer
 sudo systemctl list-timers update-notifier.timer
 sudo systemctl list-timers apt-daily-upgrade.timer    # Debian
 sudo systemctl list-timers dnf-automatic.timer        # RHEL
-```text
+```
 
 ### Test 4: Manual Notification Test
 
@@ -93,7 +133,7 @@ sudo systemctl status update-notifier.service
 
 # View detailed logs
 sudo journalctl -u update-notifier.service -n 50 --no-pager
-```text
+```
 
 **Expected Result:** You should receive notification(s) on your configured platform(s) showing current system update status.
 
@@ -111,7 +151,7 @@ sudo unattended-upgrades --debug --dry-run
 
 # Force immediate run (careful - this installs updates!)
 sudo unattended-upgrades
-```text
+```
 
 **RHEL/Rocky/Fedora:**
 
@@ -124,7 +164,7 @@ sudo dnf-automatic --downloadupdates
 
 # Force immediate run (careful - this installs updates!)
 sudo systemctl start dnf-automatic.service
-```text
+```
 
 ### Test 6: Test APT/DNF Hook
 
@@ -138,7 +178,7 @@ sudo apt install vim-tiny
 
 # Check if notification was sent
 sudo journalctl -xe | grep -i patch-gremlin
-```text
+```
 
 **RHEL/Rocky:**
 
@@ -148,7 +188,7 @@ sudo dnf install vim-minimal
 
 # Check logs
 sudo journalctl -u dnf-automatic.service -n 20
-```text
+```
 
 ### Test 7: Monitor Logs in Real-Time
 
@@ -164,7 +204,7 @@ sudo journalctl -u dnf-automatic.service -f
 
 # Watch all Patch Gremlin activity
 sudo journalctl -t patch-gremlin -f
-```text
+```
 
 ---
 
@@ -196,7 +236,7 @@ dnf check-update         # RHEL
 sudo systemctl start update-notifier.service
 
 # Check notification - should show available updates
-```text
+```
 
 ### Scenario 2: Test After Installing Updates
 
@@ -208,7 +248,7 @@ sudo dnf upgrade -y      # RHEL
 # Notification should trigger automatically via hook
 # Check logs to confirm
 sudo journalctl -u update-notifier.service -n 20
-```text
+```
 
 ### Scenario 3: Test Timer Execution
 
@@ -218,7 +258,7 @@ sudo systemctl list-timers update-notifier.timer
 
 # Manually trigger timer (advances to next scheduled time)
 sudo systemctl start update-notifier.timer
-```text
+```
 
 ### Scenario 4: Test with No Updates
 
@@ -231,7 +271,7 @@ sudo dnf upgrade -y                       # RHEL
 sudo systemctl start update-notifier.service
 
 # Notification should say "system is up to date"
-```text
+```
 
 ---
 
@@ -321,7 +361,7 @@ done
 end=$(date +%s)
 echo "Notification sent in $((end - start)) seconds"
 
-```text
+```
 
 ### Test Multiple Rapid Notifications
 
@@ -335,7 +375,7 @@ for i in {1..3}; do
     sleep 5
 done
 
-```text
+```
 
 ---
 
@@ -360,7 +400,7 @@ sudo bash test-deployment.sh
 
 sudo journalctl -u update-notifier.service -f
 
-```text
+```
 
 ---
 
@@ -378,7 +418,7 @@ sudo crontab -e
 
 0 10 * * 1 /usr/local/bin/update-notifier.sh
 
-```text
+```
 
 ---
 

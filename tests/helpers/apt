@@ -1,0 +1,11 @@
+#!/bin/bash
+if [[ "$1" == "list" ]]; then
+  echo "Listing..."
+  for p in ${STUB_UPGRADABLE:-}; do
+    echo "$p/stable 1.2-3 amd64 [upgradable from: 1.2-2]"
+  done
+  for p in ${STUB_UPGRADABLE_SECURITY:-}; do
+    echo "$p/stable-security 1.2-3 amd64 [upgradable from: 1.2-2]"
+  done
+fi
+exit 0

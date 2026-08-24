@@ -1,105 +1,180 @@
+---
 name: Testing
 
 on:
   push:
-    branches: [main, develop, doppler_setup_fix]
+    branches: [main, develop]
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+env:
+  # Pinned so every image runs the same bats, rather than whatever the distro
+  # ships. Ubuntu 22.04 has 1.2.1 (no --print-output-on-failure) and Rocky 9
+  # has no bats package at all.
+  BATS_VERSION: v1.11.1
+
 jobs:
-  unit-tests:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        os-type: [debian, rhel]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up test environment
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck curl jq
-
-      - name: Run script validation tests
-        run: |
-          echo "=== Testing Script Syntax ==="
-          for script in *.sh; do
-            [ -f "$script" ] || continue
-            echo "Testing: $script"
-            bash -n "$script"
-          done
-
-      - name: Test update-notifier.sh functions
-        run: |
-          echo "=== Testing update-notifier.sh ==="
-          # Test syntax only (sourcing requires environment setup)
-          bash -n update-notifier.sh
-
-      - name: Test configuration validation
-        run: |
-          echo "=== Testing Configuration Validation ==="
-          # Test config.example.sh syntax
-          bash -n config.example.sh
-
-  integration-tests:
-    name: Integration Tests
+  bats:
+    name: Unit and Integration Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up test environment
+      - name: Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y unattended-upgrades apt-listchanges systemd curl
+          sudo apt-get install -y bats shellcheck
 
-      - name: Test deployment script (dry-run)
+      - name: Run the bats suite
+        run: ./tests/run.sh
+
+      # Every staged install must pin its package family. Forcing the opposite
+      # family here proves no test is quietly inheriting the host's - which is
+      # precisely how the Fedora and Rocky jobs failed while Debian passed.
+      - name: Suite must be host-independent
         run: |
-          echo "=== Testing Deployment Validation ==="
-          # Test that test-deployment.sh can be parsed
-          bash -n test-deployment.sh
+          set -euo pipefail
+          PATCH_GREMLIN_OS_TYPE=rhel   ./tests/run.sh
+          PATCH_GREMLIN_OS_TYPE=debian ./tests/run.sh
 
-      - name: Test diagnostic scripts
+      - name: Verify every script parses
         run: |
-          echo "=== Testing Diagnostic Scripts ==="
-          bash -n diagnose-config.sh
-          bash -n health-check.sh
-          bash -n configure-verbosity.sh
+          set -euo pipefail
+          find . -name '*.sh' -not -path './.git/*' -print0 \
+            | xargs -0 -n1 bash -n
 
-  compatibility-tests:
-    name: OS Compatibility Tests
+  compatibility:
+    name: Staged install on ${{ matrix.container }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         container:
-          - debian:13
           - debian:12
+          - debian:13
           - ubuntu:22.04
           - ubuntu:24.04
+          - rockylinux:9
+          - fedora:41
     container:
       image: ${{ matrix.container }}
     steps:
+      - name: Install prerequisites
+        shell: bash
+        run: |
+          set -eux
+          if command -v apt-get >/dev/null; then
+            apt-get update
+            apt-get install -y bash ca-certificates git python3 curl
+          else
+            # Do NOT ask for `curl` here: these images ship curl-minimal, and
+            # `dnf install curl` fails with a file conflict against it.
+            # --allowerasing would silently swap it out instead.
+            dnf install -y bash ca-certificates git python3 tar util-linux
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install pinned bats-core
+        shell: bash
         run: |
-          apt-get update
-          apt-get install -y bash curl sudo
+          set -euo pipefail
+          git clone --depth 1 --branch "$BATS_VERSION" \
+            https://github.com/bats-core/bats-core /tmp/bats-core
+          /tmp/bats-core/install.sh /usr/local
+          bats --version
 
-      - name: Test OS detection
-        run: |
-          echo "=== Testing OS Detection ==="
-          if [ -f /etc/os-release ]; then
-            . /etc/os-release
-            echo "Detected: $ID $VERSION_ID"
-          fi
+      - name: Run the bats suite
+        shell: bash
+        run: ./tests/run.sh
 
-      - name: Validate script compatibility
+      - name: Stage a full non-interactive install (Debian branch)
+        shell: bash
         run: |
-          echo "=== Validating Script Syntax ==="
-          bash -n setup-unattended-upgrades.sh
-          bash -n update-notifier.sh
-          bash -n uninstall.sh
+          set -euo pipefail
+          root="$(mktemp -d)"
+          PATCH_GREMLIN_ROOT="$root" \
+          PATCH_GREMLIN_OS_TYPE=debian \
+          UPDATE_TYPE=security UPDATE_SCHEDULE=daily UPDATE_TIME=03:15 \
+          SECRET_MODE=local \
+          LOCAL_DISCORD_WEBHOOK='https://discord.com/api/webhooks/1/x' \
+          VERBOSE_LOGGING=false AUTO_REBOOT=true \
+            ./setup-unattended-upgrades.sh --non-interactive
+
+          test -f "$root/usr/local/bin/update-notifier.sh"
+          test -f "$root/usr/local/bin/patch-gremlin-health-check.sh"
+          test -f "$root/etc/systemd/system/update-notifier.service"
+          test -f "$root/etc/apt/apt.conf.d/50unattended-upgrades"
+          test "$(stat -c '%a' "$root/etc/update-notifier/secrets.conf")" = 600
+          test ! -f "$root/etc/apt/apt.conf.d/99patch-gremlin-notification"
+
+          PATCH_GREMLIN_ROOT="$root" ./uninstall.sh --non-interactive
+          test ! -e "$root/etc/update-notifier"
+
+      - name: Stage a full non-interactive install (RHEL branch)
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$(mktemp -d)"
+          PATCH_GREMLIN_ROOT="$root" \
+          PATCH_GREMLIN_OS_TYPE=rhel \
+          UPDATE_TYPE=security UPDATE_SCHEDULE=weekly UPDATE_DAY=Tue \
+          UPDATE_TIME=04:45 SECRET_MODE=local \
+          LOCAL_NTFY_URL='https://ntfy.example.com' LOCAL_NTFY_TOPIC=servers \
+          VERBOSE_LOGGING=false AUTO_REBOOT=true \
+            ./setup-unattended-upgrades.sh --non-interactive
+
+          test -f "$root/etc/dnf/automatic.conf"
+          grep -q '^upgrade_type = security' "$root/etc/dnf/automatic.conf"
+          # The unit is dnf-automatic.* on EL9 and dnf5-automatic.* on Fedora
+          # 41+, so assert on whichever the installer picked rather than
+          # hardcoding one and passing only on half the matrix.
+          hook="$(find "$root/etc/systemd/system" -path '*automatic.service.d/patch-gremlin.conf')"
+          test -n "$hook"
+          echo "hooked: ${hook#"$root"}"
+          grep -q 'ExecStartPost=-/usr/local/bin/update-notifier.sh' "$hook"
+          timer="$(find "$root/etc/systemd/system" -path '*automatic.timer.d/patch-gremlin.conf')"
+          test -n "$timer"
+          grep -q 'OnCalendar=Tue' "$timer"
+          test ! -e "$root/etc/apt"
+
+          PATCH_GREMLIN_ROOT="$root" ./uninstall.sh --non-interactive
+          test ! -e "$root/etc/update-notifier"
+
+      - name: Notifier smoke test against this image
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./update-notifier.sh --version
+          ./update-notifier.sh --help > /dev/null
+          # Dry run with no endpoints configured must fail cleanly, with a
+          # readable message rather than an unbound-variable crash.
+          out="$(PATCH_GREMLIN_SECRETS_FILE=/nonexistent \
+                 PATCH_GREMLIN_ENV_FILE=/nonexistent \
+                 PATCH_GREMLIN_CONFIG_FILE=/nonexistent \
+                 SECRET_MODE=local \
+                 ./update-notifier.sh --dry-run 2>&1)" && rc=0 || rc=$?
+          echo "$out"
+          test "$rc" -ne 0
+          grep -q 'No notification methods configured' <<< "$out"
+          ! grep -q 'unbound variable' <<< "$out"
+
+  notifier-payloads:
+    name: Validate notification payloads
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats python3
+
+      - name: Assert every platform payload is valid JSON
+        run: bats --print-output-on-failure tests/notifier.bats
