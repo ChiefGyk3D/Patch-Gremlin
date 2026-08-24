@@ -32,6 +32,15 @@ jobs:
       - name: Run the bats suite
         run: ./tests/run.sh
 
+      # Every staged install must pin its package family. Forcing the opposite
+      # family here proves no test is quietly inheriting the host's - which is
+      # precisely how the Fedora and Rocky jobs failed while Debian passed.
+      - name: Suite must be host-independent
+        run: |
+          set -euo pipefail
+          PATCH_GREMLIN_OS_TYPE=rhel   ./tests/run.sh
+          PATCH_GREMLIN_OS_TYPE=debian ./tests/run.sh
+
       - name: Verify every script parses
         run: |
           set -euo pipefail

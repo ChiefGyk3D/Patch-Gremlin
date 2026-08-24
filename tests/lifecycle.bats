@@ -11,9 +11,12 @@ setup() {
 }
 teardown() { teardown_sandbox; }
 
+# Debian branch: these tests assert on apt configuration, so the family must
+# be forced rather than inherited from the host.
 full_install() {
     run env PATH="$HELPERS:$PATH" \
         PATCH_GREMLIN_ROOT="$ROOTDIR" PATCH_GREMLIN_NON_INTERACTIVE=true \
+        PATCH_GREMLIN_OS_TYPE=debian \
         UPDATE_TYPE=security UPDATE_SCHEDULE=daily UPDATE_TIME=02:00 \
         SECRET_MODE=doppler DOPPLER_TOKEN=dp.st.CANARY \
         VERBOSE_LOGGING=false AUTO_REBOOT=true \
@@ -23,6 +26,7 @@ full_install() {
 
 uninstall() {
     run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian \
         bash "$REPO_ROOT/uninstall.sh" --non-interactive "$@"
 }
 
@@ -127,6 +131,7 @@ uninstall() {
 
 verbosity() {
     run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian \
         bash "$REPO_ROOT/configure-verbosity.sh" "$@"
 }
 
@@ -173,6 +178,7 @@ verbosity() {
 @test "verbosity: fails cleanly with no TTY and no flag" {
     full_install
     run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian \
         bash "$REPO_ROOT/configure-verbosity.sh" < /dev/null
     [ "$status" -eq 2 ]
     [[ "$output" == *"--quiet"* ]]
@@ -182,6 +188,7 @@ verbosity() {
     full_install
     verbosity --verbose
     run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian \
         bash "$REPO_ROOT/fix-verbose-now.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"deprecated"* ]]

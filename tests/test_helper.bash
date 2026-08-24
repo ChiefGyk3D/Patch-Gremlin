@@ -16,6 +16,16 @@ stub_path() {
 }
 
 setup_sandbox() {
+    # Pin the package family for every test. The installer and notifier both
+    # otherwise read /etc/os-release, so any assertion about apt or dnf paths
+    # would silently depend on whichever distro the suite happens to run on -
+    # which is exactly how the Fedora and Rocky CI jobs failed while Debian
+    # and Ubuntu passed. Tests that want the RHEL branch override this.
+    #
+    # Guard: `PATCH_GREMLIN_OS_TYPE=rhel ./tests/run.sh` must still pass 100%.
+    # If it does not, some staged install is inheriting the host family.
+    export PATCH_GREMLIN_OS_TYPE="${PATCH_GREMLIN_OS_TYPE:-debian}"
+
     SANDBOX="$(mktemp -d)"
     export SANDBOX
     STUB_CAPTURE_DIR="$SANDBOX/calls"
