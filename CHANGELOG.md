@@ -114,6 +114,11 @@ the new secret layout and trigger wiring are applied.
   of bug that shipped in 1.x.
 - `SECURITY.md`, `CONTRIBUTING.md`, this changelog, and Dependabot for
   GitHub Actions.
+- `PATCH_GREMLIN_OS_TYPE` forces the package-family branch, so both the Debian
+  and RHEL installer paths are tested on every CI image rather than only the
+  one matching the host.
+- `tests/run.sh` as the canonical suite entry point; it detects which flags the
+  local bats supports instead of assuming a recent version.
 
 ### Changed
 

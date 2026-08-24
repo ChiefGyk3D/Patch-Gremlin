@@ -201,11 +201,26 @@ detect_os() {
     OS_VERSION="${VERSION_ID:-rolling}"
     OS_LIKE="${ID_LIKE:-}"
 
-    if [[ "$OS_ID" =~ ^(debian|ubuntu|raspbian)$ ]] || [[ "$OS_LIKE" =~ debian ]]; then
+    # PATCH_GREMLIN_OS_TYPE forces the family, so the suite can exercise the
+    # Debian and RHEL branches on whatever host it happens to run on. Without
+    # it the tests only checked whichever family the CI image belonged to, and
+    # every apt-path assertion failed on Fedora and Rocky.
+    if [[ -n "${PATCH_GREMLIN_OS_TYPE:-}" ]]; then
+        case "$PATCH_GREMLIN_OS_TYPE" in
+            debian|rhel) OS_TYPE="$PATCH_GREMLIN_OS_TYPE" ;;
+            *) die "PATCH_GREMLIN_OS_TYPE must be 'debian' or 'rhel' (got '$PATCH_GREMLIN_OS_TYPE')" ;;
+        esac
+    elif [[ "$OS_ID" =~ ^(debian|ubuntu|raspbian)$ ]] || [[ "$OS_LIKE" =~ debian ]]; then
         OS_TYPE="debian"
-        PACKAGE_MANAGER="apt-get"
     elif [[ "$OS_ID" =~ ^(rhel|centos|rocky|almalinux|fedora|amzn)$ ]] || [[ "$OS_LIKE" =~ (rhel|fedora) ]]; then
         OS_TYPE="rhel"
+    else
+        die "Unsupported OS: $OS_ID (supported: Debian, Ubuntu, RHEL, Rocky, AlmaLinux, Amazon Linux, Fedora)"
+    fi
+
+    if [[ "$OS_TYPE" == "debian" ]]; then
+        PACKAGE_MANAGER="apt-get"
+    else
         # Amazon Linux 2 has no dnf; Fedora 41+ ships dnf5-automatic.
         if command -v dnf &>/dev/null; then
             PACKAGE_MANAGER="dnf"
@@ -214,8 +229,6 @@ detect_os() {
         else
             PACKAGE_MANAGER="dnf"
         fi
-    else
-        die "Unsupported OS: $OS_ID (supported: Debian, Ubuntu, RHEL, Rocky, AlmaLinux, Amazon Linux, Fedora)"
     fi
 }
 

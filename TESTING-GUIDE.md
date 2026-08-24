@@ -11,7 +11,7 @@ There are two layers of testing:
 
 ```bash
 sudo apt-get install -y bats shellcheck   # or dnf install -y bats ShellCheck
-bats tests/
+./tests/run.sh
 shellcheck -x -S style $(find . -name '*.sh' -not -path './.git/*')
 ```
 
@@ -27,6 +27,10 @@ Run a single file or a single test:
 bats tests/notifier.bats
 bats tests/setup.bats --filter "reboot time"
 ```
+
+Both the Debian and RHEL installer branches are covered on any host, because
+the tests pin `PATCH_GREMLIN_OS_TYPE` rather than inheriting the host's
+package family.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how `PATCH_GREMLIN_ROOT` and
 `PATCH_GREMLIN_SOURCE_ONLY` make the scripts testable.

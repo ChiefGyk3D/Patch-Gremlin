@@ -9,7 +9,7 @@ on other people's servers, so the bar for changes is deliberately high.
 git clone https://github.com/ChiefGyk3D/Patch-Gremlin
 cd Patch-Gremlin
 sudo apt-get install -y bats shellcheck   # or: sudo dnf install -y bats ShellCheck
-bats tests/
+./tests/run.sh
 ```
 
 The suite runs entirely in a sandbox — it never writes outside a temporary
@@ -19,10 +19,14 @@ directory and never contacts the network. Command stubs live in
 ## Before opening a pull request
 
 ```bash
-bats tests/                                                   # must be green
+./tests/run.sh                                                # must be green
 shellcheck -x -S style $(find . -name '*.sh' -not -path './.git/*')
 find . -name '*.sh' -not -path './.git/*' -exec bash -n {} \;
 ```
+
+Use `./tests/run.sh` rather than calling `bats` directly: distro bats versions
+differ (Ubuntu 22.04 ships 1.2.1, which has no `--print-output-on-failure`)
+and the runner detects what the local build supports.
 
 ## Testing conventions
 
@@ -34,6 +38,10 @@ Every behavioural change needs a test. Two mechanisms make that possible:
 - **`PATCH_GREMLIN_SOURCE_ONLY=1`** — makes `update-notifier.sh` define its
   functions and return without running `main`, so individual functions can be
   unit-tested.
+- **`PATCH_GREMLIN_OS_TYPE=debian|rhel`** — forces the package-family branch in
+  both the installer and the notifier. Without it, tests asserting apt paths
+  quietly depended on whichever family the host belonged to and failed on
+  Fedora and Rocky.
 
 Paths are environment-overridable (`PATCH_GREMLIN_LOG_FILE`,
 `PATCH_GREMLIN_SECRETS_FILE`, `PATCH_GREMLIN_STATE_DIR`, …) specifically so

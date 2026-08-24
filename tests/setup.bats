@@ -12,10 +12,23 @@ setup() {
 }
 teardown() { teardown_sandbox; }
 
+# Force the Debian branch regardless of the host running the suite. Without
+# this every apt-path assertion below silently depended on the CI image's
+# family, and they all failed on Fedora and Rocky.
 install_debian() {
     run env PATH="$HELPERS:$PATH" \
         PATCH_GREMLIN_ROOT="$ROOTDIR" \
         PATCH_GREMLIN_NON_INTERACTIVE=true \
+        PATCH_GREMLIN_OS_TYPE=debian \
+        "$@" \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive
+}
+
+install_rhel() {
+    run env PATH="$HELPERS:$PATH" \
+        PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_NON_INTERACTIVE=true \
+        PATCH_GREMLIN_OS_TYPE=rhel \
         "$@" \
         bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive
 }
@@ -375,4 +388,116 @@ EOF
     [ "$status" -eq 0 ]
     second="$(cat "$ROOTDIR/etc/apt/apt.conf.d/50unattended-upgrades")"
     [ "$first" = "$second" ]
+}
+
+# --------------------------------------------------------------------------
+# RHEL branch - previously untested, and the reason the Fedora/Rocky CI jobs
+# were only ever exercising half the installer.
+# --------------------------------------------------------------------------
+
+rhel_env() {
+    echo UPDATE_TYPE=security
+    echo UPDATE_SCHEDULE=daily
+    echo UPDATE_TIME=02:00
+    echo SECRET_MODE=local
+    echo VERBOSE_LOGGING=false
+    echo AUTO_REBOOT=true
+    echo LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc
+}
+
+default_rhel_install() {
+    # shellcheck disable=SC2046
+    install_rhel $(rhel_env) "$@"
+}
+
+@test "setup(rhel): a full non-interactive install succeeds" {
+    default_rhel_install
+    [ "$status" -eq 0 ]
+    [ -f "$ROOTDIR/etc/dnf/automatic.conf" ]
+    [ -f "$ROOTDIR/usr/local/bin/update-notifier.sh" ]
+    [ -f "$ROOTDIR/usr/local/bin/patch-gremlin-health-check.sh" ]
+    [ -f "$ROOTDIR/etc/systemd/system/update-notifier.service" ]
+    # No apt artefacts on the RHEL branch
+    [ ! -e "$ROOTDIR/etc/apt" ]
+}
+
+@test "setup(rhel): security mode sets upgrade_type = security" {
+    default_rhel_install
+    [ "$status" -eq 0 ]
+    grep -q '^upgrade_type = security' "$ROOTDIR/etc/dnf/automatic.conf"
+}
+
+@test "setup(rhel): 'all' mode sets upgrade_type = default" {
+    install_rhel UPDATE_TYPE=all UPDATE_SCHEDULE=daily UPDATE_TIME=02:00 \
+        SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=true \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc
+    [ "$status" -eq 0 ]
+    grep -q '^upgrade_type = default' "$ROOTDIR/etc/dnf/automatic.conf"
+}
+
+@test "setup(rhel): auto-reboot maps onto dnf-automatic's reboot setting" {
+    default_rhel_install
+    [ "$status" -eq 0 ]
+    grep -q '^reboot = when-needed' "$ROOTDIR/etc/dnf/automatic.conf"
+
+    install_rhel UPDATE_TYPE=security UPDATE_SCHEDULE=daily UPDATE_TIME=02:00 \
+        SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=false \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc
+    [ "$status" -eq 0 ]
+    grep -q '^reboot = never' "$ROOTDIR/etc/dnf/automatic.conf"
+}
+
+@test "setup(rhel): notification hangs off dnf-automatic.service" {
+    default_rhel_install
+    [ "$status" -eq 0 ]
+    grep -q 'ExecStartPost=-/usr/local/bin/update-notifier.sh' \
+        "$ROOTDIR/etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf"
+    # and the token is NOT exported into the upgrade process.
+    # Anchor the match: the file carries a comment explaining the absence.
+    ! grep -q '^EnvironmentFile=' \
+        "$ROOTDIR/etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf"
+}
+
+@test "setup(rhel): weekly schedule lands in the dnf-automatic timer override" {
+    install_rhel UPDATE_TYPE=security UPDATE_SCHEDULE=weekly UPDATE_DAY=Tue \
+        UPDATE_TIME=04:45 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=true \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc
+    [ "$status" -eq 0 ]
+    grep -q 'OnCalendar=Tue \*-\*-\* 04:45:00' \
+        "$ROOTDIR/etc/systemd/system/dnf-automatic.timer.d/patch-gremlin.conf"
+}
+
+@test "setup(rhel): secrets file is mode 600 and holds no token in the unit" {
+    install_rhel UPDATE_TYPE=security UPDATE_SCHEDULE=daily UPDATE_TIME=02:00 \
+        SECRET_MODE=doppler DOPPLER_TOKEN=dp.st.RHELCANARY \
+        VERBOSE_LOGGING=false AUTO_REBOOT=true
+    [ "$status" -eq 0 ]
+    [ "$(stat -c '%a' "$ROOTDIR/etc/update-notifier/env")" = "600" ]
+    while IFS= read -r f; do
+        mode="$(stat -c '%a' "$f")"
+        if [[ "${mode: -1}" =~ [4567] ]] && grep -q 'dp.st.RHELCANARY' "$f" 2>/dev/null; then
+            echo "token leaked into world-readable $f (mode $mode)" >&2
+            return 1
+        fi
+    done < <(find "$ROOTDIR" -type f)
+}
+
+@test "setup(rhel): install is idempotent" {
+    default_rhel_install
+    [ "$status" -eq 0 ]
+    first="$(cat "$ROOTDIR/etc/dnf/automatic.conf")"
+    default_rhel_install
+    [ "$status" -eq 0 ]
+    [ "$first" = "$(cat "$ROOTDIR/etc/dnf/automatic.conf")" ]
+}
+
+@test "setup: an invalid PATCH_GREMLIN_OS_TYPE is rejected" {
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=plan9 \
+        UPDATE_TYPE=security UPDATE_SCHEDULE=daily UPDATE_TIME=02:00 \
+        SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=true \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"PATCH_GREMLIN_OS_TYPE"* ]]
 }

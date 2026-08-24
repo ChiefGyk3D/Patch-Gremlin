@@ -10,6 +10,12 @@ on:
 permissions:
   contents: read
 
+env:
+  # Pinned so every image runs the same bats, rather than whatever the distro
+  # ships. Ubuntu 22.04 has 1.2.1 (no --print-output-on-failure) and Rocky 9
+  # has no bats package at all.
+  BATS_VERSION: v1.11.1
+
 jobs:
   bats:
     name: Unit and Integration Tests
@@ -24,7 +30,7 @@ jobs:
           sudo apt-get install -y bats shellcheck
 
       - name: Run the bats suite
-        run: bats --print-output-on-failure tests/
+        run: ./tests/run.sh
 
       - name: Verify every script parses
         run: |
@@ -54,48 +60,92 @@ jobs:
           set -eux
           if command -v apt-get >/dev/null; then
             apt-get update
-            apt-get install -y bash curl ca-certificates git bats python3
+            apt-get install -y bash ca-certificates git python3 curl
           else
-            (dnf install -y bash curl ca-certificates git bats python3 || \
-             dnf install -y bash curl ca-certificates git python3)
+            # Do NOT ask for `curl` here: these images ship curl-minimal, and
+            # `dnf install curl` fails with a file conflict against it.
+            # --allowerasing would silently swap it out instead.
+            dnf install -y bash ca-certificates git python3 tar util-linux
           fi
 
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Stage a full non-interactive install
+      - name: Install pinned bats-core
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$BATS_VERSION" \
+            https://github.com/bats-core/bats-core /tmp/bats-core
+          /tmp/bats-core/install.sh /usr/local
+          bats --version
+
+      - name: Run the bats suite
+        shell: bash
+        run: ./tests/run.sh
+
+      - name: Stage a full non-interactive install (Debian branch)
         shell: bash
         run: |
           set -euo pipefail
           root="$(mktemp -d)"
           PATCH_GREMLIN_ROOT="$root" \
+          PATCH_GREMLIN_OS_TYPE=debian \
           UPDATE_TYPE=security UPDATE_SCHEDULE=daily UPDATE_TIME=03:15 \
           SECRET_MODE=local \
           LOCAL_DISCORD_WEBHOOK='https://discord.com/api/webhooks/1/x' \
           VERBOSE_LOGGING=false AUTO_REBOOT=true \
             ./setup-unattended-upgrades.sh --non-interactive
 
-          echo "--- staged tree ---"
-          find "$root" -type f | sort
-
           test -f "$root/usr/local/bin/update-notifier.sh"
           test -f "$root/usr/local/bin/patch-gremlin-health-check.sh"
           test -f "$root/etc/systemd/system/update-notifier.service"
+          test -f "$root/etc/apt/apt.conf.d/50unattended-upgrades"
           test "$(stat -c '%a' "$root/etc/update-notifier/secrets.conf")" = 600
           test ! -f "$root/etc/apt/apt.conf.d/99patch-gremlin-notification"
 
-          echo "--- uninstall ---"
           PATCH_GREMLIN_ROOT="$root" ./uninstall.sh --non-interactive
           test ! -e "$root/etc/update-notifier"
 
-      - name: Run the bats suite where available
+      - name: Stage a full non-interactive install (RHEL branch)
         shell: bash
         run: |
-          if command -v bats >/dev/null; then
-            bats --print-output-on-failure tests/
-          else
-            echo "bats unavailable on this image; staged install check covered it"
-          fi
+          set -euo pipefail
+          root="$(mktemp -d)"
+          PATCH_GREMLIN_ROOT="$root" \
+          PATCH_GREMLIN_OS_TYPE=rhel \
+          UPDATE_TYPE=security UPDATE_SCHEDULE=weekly UPDATE_DAY=Tue \
+          UPDATE_TIME=04:45 SECRET_MODE=local \
+          LOCAL_NTFY_URL='https://ntfy.example.com' LOCAL_NTFY_TOPIC=servers \
+          VERBOSE_LOGGING=false AUTO_REBOOT=true \
+            ./setup-unattended-upgrades.sh --non-interactive
+
+          test -f "$root/etc/dnf/automatic.conf"
+          grep -q '^upgrade_type = security' "$root/etc/dnf/automatic.conf"
+          grep -q 'ExecStartPost=-/usr/local/bin/update-notifier.sh' \
+            "$root/etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf"
+          test ! -e "$root/etc/apt"
+
+          PATCH_GREMLIN_ROOT="$root" ./uninstall.sh --non-interactive
+          test ! -e "$root/etc/update-notifier"
+
+      - name: Notifier smoke test against this image
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./update-notifier.sh --version
+          ./update-notifier.sh --help > /dev/null
+          # Dry run with no endpoints configured must fail cleanly, with a
+          # readable message rather than an unbound-variable crash.
+          out="$(PATCH_GREMLIN_SECRETS_FILE=/nonexistent \
+                 PATCH_GREMLIN_ENV_FILE=/nonexistent \
+                 PATCH_GREMLIN_CONFIG_FILE=/nonexistent \
+                 SECRET_MODE=local \
+                 ./update-notifier.sh --dry-run 2>&1)" && rc=0 || rc=$?
+          echo "$out"
+          test "$rc" -ne 0
+          grep -q 'No notification methods configured' <<< "$out"
+          ! grep -q 'unbound variable' <<< "$out"
 
   notifier-payloads:
     name: Validate notification payloads

@@ -345,7 +345,7 @@ suite that never writes outside a temp directory or touches the network:
 
 ```bash
 sudo apt-get install -y bats shellcheck
-bats tests/
+./tests/run.sh
 ```
 
 ### Monitoring Integration
