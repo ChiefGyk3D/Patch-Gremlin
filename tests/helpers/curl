@@ -1,0 +1,31 @@
+#!/bin/bash
+# Test stub for curl. Records args + payload to $STUB_CAPTURE_DIR, emits $STUB_HTTP_CODE.
+n=$(( $(ls "$STUB_CAPTURE_DIR"/call-* 2>/dev/null | wc -l) + 1 ))
+out="$STUB_CAPTURE_DIR/call-$n"
+: > "$out"
+payload=""
+url=""
+prev=""
+for a in "$@"; do
+  case "$prev" in
+    -d) payload="$a" ;;
+  esac
+  case "$a" in
+    http*) url="$a" ;;
+  esac
+  prev="$a"
+done
+{ echo "URL=$url"; echo "ARGS=$*"; } > "$out"
+# payload may be @file
+if [[ "$payload" == @* ]]; then
+  cp "${payload#@}" "$STUB_CAPTURE_DIR/payload-$n" 2>/dev/null || true
+elif [[ -n "$payload" ]]; then
+  printf '%s' "$payload" > "$STUB_CAPTURE_DIR/payload-$n"
+fi
+code="${STUB_HTTP_CODE:-204}"
+# Matrix login needs a JSON body back
+if [[ "$url" == *"/login"* ]]; then
+  printf '{"access_token":"syt_TESTTOKEN","device_id":"TESTDEV"}'
+fi
+if [[ "$*" == *"-w"* ]]; then printf '\n%s' "$code"; fi
+exit 0
