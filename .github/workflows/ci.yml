@@ -1,0 +1,40 @@
+# Shell lint and tests through ChiefGyk3D/git-your-ship-together. Its
+# `CI green` job is the one check branch protection watches (`ci / CI green`).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    uses: ChiefGyk3D/git-your-ship-together/.github/workflows/bash-ci.yml@0e58a0e61ea8b3800d1cb0e6ed81bb860ace2094 # v1.6.3
+    permissions:
+      contents: read
+    with:
+      # ShellCheck at warning, as the old lint.yml ran it. shfmt is off: the
+      # scripts were never formatted with it and no run has measured the diff.
+      shellcheck-severity: warning
+      shfmt: false
+      # The old test.yml only ever ran bash -n; it now runs on every OS the
+      # compatibility matrix named.
+      test-command: |
+        for script in $(git ls-files '*.sh'); do
+          echo "Syntax check: $script"
+          bash -n "$script"
+        done
+      distros: '["debian:13", "debian:12", "ubuntu:22.04", "ubuntu:24.04"]'
+      distro-setup-command: apt-get update && apt-get install -y bash git ca-certificates
+      config-lint-install-command: pip install yamllint
+      config-lint-command: yamllint -c .yamllint.yml .github/workflows
+      egress-policy: block
