@@ -33,10 +33,25 @@ jobs:
           echo "Syntax check: $script"
           bash -n "$script"
         done
+        if [ -d tests ]; then
+          bats tests/
+        else
+          echo "Bats suite is not present on this branch; syntax checks passed."
+        fi
+      test-install-command: |
+        if [ -d tests ]; then
+          if [ "$(id -u)" -eq 0 ]; then
+            apt-get install -y bats
+          else
+            sudo apt-get install -y bats
+          fi
+        fi
       distros: '["debian:13", "debian:12", "ubuntu:22.04", "ubuntu:24.04"]'
       distro-setup-command: apt-get update && apt-get install -y bash git ca-certificates
       config-lint-install-command: pip install yamllint
       config-lint-command: yamllint -c .yamllint.yml .github/workflows
       egress-policy: block
       # raven-actions/actionlint installs from npm and fetches from raw.githubusercontent.com; zizmor pulls its image from ghcr.io.
-      extra-allowed-endpoints: ghcr.io:443 pkg-containers.githubusercontent.com:443 raw.githubusercontent.com:443 registry.npmjs.org:443
+      extra-allowed-endpoints: >-
+        ghcr.io:443 pkg-containers.githubusercontent.com:443 raw.githubusercontent.com:443 registry.npmjs.org:443
+        azure.archive.ubuntu.com:80 archive.ubuntu.com:80 security.ubuntu.com:80
