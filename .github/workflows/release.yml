@@ -1,123 +1,48 @@
----
-name: Release Management
+# On a version tag: build the tarball the old release.yml built, then publish
+# it with SHA256SUMS, a keyless cosign bundle and build provenance, through
+# ChiefGyk3D/git-your-ship-together. A pull request builds and checks only.
+name: Release
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  create-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
+  artifacts:
+    uses: ChiefGyk3D/git-your-ship-together/.github/workflows/artifact-release.yml@0e58a0e61ea8b3800d1cb0e6ed81bb860ace2094 # v1.6.3
     permissions:
       contents: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Generate changelog
-        id: changelog
-        run: |
-          set -euo pipefail
-          echo "## What's Changed" > CHANGELOG.txt
-          # `git describe HEAD^` fails on the very first tag - fall back to
-          # the full history instead of failing the release.
-          if prev="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null)"; then
-            range="${prev}..HEAD"
-          else
-            range="HEAD"
-          fi
-          git log "$range" --pretty=format:"- %s (%h)" >> CHANGELOG.txt
-          cat CHANGELOG.txt
-
-      - name: Create Release Archive
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/}
-          tar -czf patch-gremlin-${VERSION}.tar.gz \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='*.tar.gz' \
-            .
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          body_path: CHANGELOG.txt
-          files: patch-gremlin-*.tar.gz
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  validate-release:
-    name: Validate Release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install bats
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bats
-
-      - name: The suite must pass before anything is released
-        run: bats --print-output-on-failure tests/
-
-      - name: Verify all required files exist
-        run: |
-          echo "=== Verifying Release Contents ==="
-          required_files=(
-            "setup-unattended-upgrades.sh"
-            "update-notifier.sh"
-            "uninstall.sh"
-            "config.example.sh"
-            "README.md"
-            "test-deployment.sh"
-            "diagnose-config.sh"
-            "health-check.sh"
-            "configure-verbosity.sh"
-            "fix-verbose-now.sh"
-            "monitoring/nagios-check.sh"
-            "monitoring/prometheus-exporter.sh"
-          )
-
-          for file in "${required_files[@]}"; do
-            if [ -f "$file" ]; then
-              echo "✓ Found: $file"
-            else
-              echo "✗ Missing: $file"
-              exit 1
-            fi
-          done
-
-      - name: Verify script executability
-        run: |
-          set -euo pipefail
-          rc=0
-          for script in setup-unattended-upgrades.sh update-notifier.sh uninstall.sh \
-                        health-check.sh diagnose-config.sh configure-verbosity.sh; do
-            if [ ! -x "$script" ]; then
-              echo "::error file=$script::not executable in the tagged tree"
-              rc=1
-            fi
-          done
-          exit $rc
-
-      - name: Generate release notes
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/}
-          echo "# Patch Gremlin $VERSION" > RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "## Installation" >> RELEASE_NOTES.md
-          echo '```bash' >> RELEASE_NOTES.md
-          REPO_URL="https://github.com/ChiefGyk3D/Patch-Gremlin"
-          echo "curl -sL ${REPO_URL}/archive/${VERSION}.tar.gz | tar xz" >> RELEASE_NOTES.md
-          echo "cd Patch-Gremlin-${VERSION#v}" >> RELEASE_NOTES.md
-          echo "sudo -E bash setup-unattended-upgrades.sh" >> RELEASE_NOTES.md
-          echo '```' >> RELEASE_NOTES.md
-          cat RELEASE_NOTES.md
+      id-token: write
+      attestations: write
+    with:
+      publish: ${{ startsWith(github.ref, 'refs/tags/v') }}
+      build-command: |
+        mkdir -p dist
+        tar -czf "dist/patch-gremlin-v${VERSION}.tar.gz" \
+          --exclude='.git' --exclude='.github' --exclude='dist' .
+      artifacts: dist/patch-gremlin-*.tar.gz
+      verify-command: |
+        for file in setup-unattended-upgrades.sh update-notifier.sh uninstall.sh \
+          config.example.sh README.md test-deployment.sh diagnose-config.sh \
+          health-check.sh configure-verbosity.sh fix-verbose-now.sh; do
+          test -f "$file" || { echo "missing: $file"; exit 1; }
+        done
+        for script in setup-unattended-upgrades.sh update-notifier.sh uninstall.sh; do
+          test -x "$script" || { echo "not executable: $script"; exit 1; }
+        done
+      release-notes-command: |
+        echo "# Patch Gremlin v${VERSION}"
+        echo
+        echo "## Installation"
+        echo '```bash'
+        echo "curl -sL https://github.com/ChiefGyk3D/Patch-Gremlin/archive/v${VERSION}.tar.gz | tar xz"
+        echo "cd Patch-Gremlin-${VERSION}"
+        echo "sudo -E bash setup-unattended-upgrades.sh"
+        echo '```'
+      egress-policy: block

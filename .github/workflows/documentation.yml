@@ -1,4 +1,5 @@
----
+# Stays local: GYST has no workflow for documentation checks. These are
+# path-filtered to Markdown, so they cannot be required checks.
 name: Documentation
 
 on:
@@ -15,53 +16,42 @@ permissions:
   contents: read
 
 jobs:
+  markdown-lint:
+    name: Markdown Linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Lint Markdown files
+        run: npx --yes markdownlint-cli2@0.18.1 '**/*.md'
+
   check-links:
     name: Check Markdown Links
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Check links in markdown files
-        uses: lycheeverse/lychee-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Settings live in lychee.toml so they are visible outside CI and
-          # can be reproduced locally with `lychee --config lychee.toml .`
-          args: --config lychee.toml './**/*.md'
-          fail: true
+          persist-credentials: false
+      - name: Check links in markdown files
+        run: |
+          for f in $(git ls-files '*.md'); do
+            npx --yes markdown-link-check@3.13.7 -q -c .markdown-link-check.json "$f"
+          done
 
   documentation-quality:
     name: Documentation Quality Check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Check for required documentation
         run: |
-          echo "=== Checking Required Documentation ==="
-          required_docs=(
-            "README.md"
-            "TESTING-GUIDE.md"
-            "TROUBLESHOOTING.md"
-          )
-
-          for doc in "${required_docs[@]}"; do
-            if [ -f "$doc" ]; then
-              echo "✓ Found: $doc"
-              lines=$(wc -l < "$doc")
-              echo "  Lines: $lines"
-            else
-              echo "✗ Missing: $doc"
-              exit 1
-            fi
-          done
-
-      - name: Check documentation freshness
-        run: |
-          echo "=== Documentation Last Updated ==="
-          for doc in *.md; do
-            [ -f "$doc" ] || continue
-            last_modified=$(git log -1 --format="%ai" -- "$doc" 2>/dev/null || echo "N/A")
-            echo "$doc: $last_modified"
+          for doc in README.md TESTING-GUIDE.md TROUBLESHOOTING.md; do
+            test -f "$doc" || { echo "Missing: $doc"; exit 1; }
+            echo "Found: $doc ($(wc -l < "$doc") lines)"
           done
