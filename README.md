@@ -634,6 +634,17 @@ This will remove:
 Issues and pull requests welcome! By contributing, you agree to license your
 contributions under the same dual license (MPL-2.0 / Commercial).
 
+**CI.** Shell lint and tests, security scanning and releases run through the
+reusable workflows in
+[git-your-ship-together](https://github.com/ChiefGyk3D/git-your-ship-together).
+Branch protection requires these checks:
+
+- `ci / CI green` (ShellCheck, `bash -n` on four distributions, workflow lint)
+- `security / CodeQL`, `security / Secret scan (gitleaks)` and
+  `security / Semgrep`
+
+The documentation checks are path-filtered to Markdown and are not required.
+
 **Ways to contribute:**
 
 - 🐛 Report bugs
