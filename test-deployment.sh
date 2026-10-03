@@ -1,8 +1,11 @@
 #!/bin/bash
-# Comprehensive deployment test for Patch Gremlin
-# Tests both the notification system and unattended upgrades
+#
+# Patch Gremlin - on-host deployment verification.
+# Checks a real installation end to end and exits non-zero if anything failed.
 
-set -euo pipefail
+set -uo pipefail
+
+PATCH_GREMLIN_VERSION="2.0.0"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -10,396 +13,226 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${BLUE}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║      Patch Gremlin Deployment Test Suite                ║${NC}"
-echo -e "${BLUE}╔══════════════════════════════════════════════════════════╗${NC}"
-echo ""
+ASSUME_YES="${PATCH_GREMLIN_ASSUME_YES:-false}"
+SKIP_LIVE="${PATCH_GREMLIN_SKIP_LIVE:-false}"
 
-# Check if running as root
-if [[ $EUID -ne 0 ]]; then
-    echo -e "${RED}This script must be run as root${NC}"
-    echo "Run: sudo bash $0"
-    exit 1
-fi
+PASSED=0
+FAILED=0
+SKIPPED=0
 
-# Detect OS
-if [[ -f /etc/debian_version ]]; then
-    OS_TYPE="debian"
-    UPDATE_TIMER="apt-daily-upgrade.timer"
-    HOOK_FILE="/etc/apt/apt.conf.d/99patch-gremlin-notification"
-elif [[ -f /etc/redhat-release ]]; then
-    OS_TYPE="rhel"
-    UPDATE_TIMER="dnf-automatic.timer"
-    HOOK_FILE="/etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf"
-else
-    echo -e "${RED}Unsupported OS${NC}"
-    exit 1
-fi
+usage() {
+    cat <<EOF
+Patch Gremlin deployment test v${PATCH_GREMLIN_VERSION}
 
-echo -e "${YELLOW}Detected OS: ${OS_TYPE}${NC}"
-echo ""
+Usage: sudo ./test-deployment.sh [OPTIONS]
 
-# Test 1: Check Installation
-echo -e "${BLUE}═══ Test 1: Installation Check ═══${NC}"
-test1_pass=true
+Options:
+  -y, --yes         Answer yes to the live notification test
+  -s, --skip-live   Never send a live notification
+  -h, --help        Show this help and exit
+  -V, --version     Show the version and exit
 
-files_to_check=(
-    "/usr/local/bin/update-notifier.sh"
-    "/etc/systemd/system/update-notifier.service"
-    "/etc/systemd/system/update-notifier.timer"
-    "$HOOK_FILE"
-)
+Exits 0 only if every check passed.
+EOF
+}
 
-for file in "${files_to_check[@]}"; do
-    if [[ -f "$file" ]]; then
-        echo -e "${GREEN}✓${NC} Found: $file"
-    else
-        echo -e "${RED}✗${NC} Missing: $file"
-        test1_pass=false
-    fi
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -y|--yes)       ASSUME_YES=true ;;
+        -s|--skip-live) SKIP_LIVE=true ;;
+        -h|--help)      usage; exit 0 ;;
+        -V|--version)   echo "patch-gremlin $PATCH_GREMLIN_VERSION"; exit 0 ;;
+        *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+    shift
 done
 
-if [[ "$test1_pass" == "true" ]]; then
-    echo -e "${GREEN}Test 1: PASSED${NC}"
+# Plain assignment, not ((PASSED++)) - post-increment returns the OLD value,
+# so the first ((x++)) returns status 1 and kills the script under `set -e`.
+pass() { PASSED=$((PASSED + 1)); echo -e "${GREEN}✓${NC} $*"; }
+fail() { FAILED=$((FAILED + 1)); echo -e "${RED}✗${NC} $*"; }
+skip() { SKIPPED=$((SKIPPED + 1)); echo -e "${YELLOW}·${NC} $* (skipped)"; }
+head2() { echo ""; echo -e "${BLUE}═══ $* ═══${NC}"; }
+
+echo -e "${BLUE}╔═══════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║      Patch Gremlin Deployment Test v${PATCH_GREMLIN_VERSION}             ║${NC}"
+echo -e "${BLUE}╚═══════════════════════════════════════════════════════╝${NC}"
+
+if [[ $EUID -ne 0 ]]; then
+    echo -e "${RED}This script must be run as root: sudo bash $0${NC}" >&2
+    exit 2
+fi
+
+# ---------------------------------------------------------------------------
+head2 "Environment"
+# ---------------------------------------------------------------------------
+if [[ -f /etc/debian_version ]]; then
+    OS_TYPE=debian; UPDATE_TIMER=apt-daily-upgrade.timer; UPGRADE_UNIT=apt-daily-upgrade.service
+elif [[ -f /etc/redhat-release ]] || [[ -f /etc/system-release ]]; then
+    OS_TYPE=rhel;   UPDATE_TIMER=dnf-automatic.timer;     UPGRADE_UNIT=dnf-automatic.service
 else
-    echo -e "${RED}Test 1: FAILED${NC}"
-    echo ""
-    echo -e "${YELLOW}Patch Gremlin is not installed on this system.${NC}"
-    echo ""
-    echo "This test must be run on the system where Patch Gremlin is installed."
-    echo ""
-    echo "To install Patch Gremlin on this system:"
-    echo "  sudo ./setup-unattended-upgrades.sh"
-    echo ""
-    echo "To test a remote system (e.g., Raspberry Pi):"
-    echo "  ssh pi@your-pi-hostname"
-    echo "  cd /path/to/Patch-Gremlin"
-    echo "  sudo ./test-deployment.sh"
+    echo -e "${RED}Unsupported OS${NC}" >&2
+    exit 2
+fi
+pass "Detected OS type: $OS_TYPE"
+
+# ---------------------------------------------------------------------------
+head2 "Installation"
+# ---------------------------------------------------------------------------
+for f in /usr/local/bin/update-notifier.sh \
+         /usr/local/bin/patch-gremlin-health-check.sh \
+         /etc/systemd/system/update-notifier.service \
+         "/etc/systemd/system/${UPGRADE_UNIT}.d/patch-gremlin.conf"; do
+    if [[ -e "$f" ]]; then pass "Present: $f"; else fail "Missing: $f"; fi
+done
+
+if [[ -f /etc/apt/apt.conf.d/99patch-gremlin-notification ]]; then
+    fail "Legacy APT Dpkg::Post-Invoke hook present (fires on every apt run)"
+    echo "    Fix: sudo -E ./setup-unattended-upgrades.sh --update-only"
+else
+    pass "No legacy APT hook"
+fi
+
+# ---------------------------------------------------------------------------
+head2 "Secrets"
+# ---------------------------------------------------------------------------
+if [[ -f /etc/update-notifier/secrets.conf ]]; then
+    perms="$(stat -c '%a' /etc/update-notifier/secrets.conf)"
+    if [[ "$perms" == "600" ]]; then
+        pass "secrets.conf is mode 600"
+    else
+        fail "secrets.conf is mode $perms (expected 600)"
+    fi
+    endpoints=0
+    for key in DISCORD_WEBHOOK SLACK_WEBHOOK TEAMS_WEBHOOK MATRIX_WEBHOOK \
+               MATRIX_HOMESERVER NTFY_URL GOTIFY_URL GENERIC_WEBHOOK_URL; do
+        if grep -qE "^${key}=\"?[^\"[:space:]]+\"?$" /etc/update-notifier/secrets.conf; then
+            endpoints=$((endpoints + 1))
+        fi
+    done
+    if [[ $endpoints -gt 0 ]]; then
+        pass "$endpoints notification endpoint(s) configured"
+    else
+        fail "No notification endpoints configured"
+    fi
+elif [[ -f /etc/update-notifier/env ]]; then
+    perms="$(stat -c '%a' /etc/update-notifier/env)"
+    if [[ "$perms" == "600" ]]; then
+        pass "env file is mode 600"
+    else
+        fail "env file is mode $perms (expected 600)"
+    fi
+else
+    fail "No secret storage found in /etc/update-notifier"
+fi
+
+# The token must never be readable by ordinary users.
+leaked=0
+while IFS= read -r f; do
+    mode="$(stat -c '%a' "$f" 2>/dev/null || echo 000)"
+    if [[ "${mode: -1}" =~ [4567] ]] && grep -q 'dp\.st\.' "$f" 2>/dev/null; then
+        fail "Doppler token readable in world-readable $f (mode $mode)"
+        leaked=1
+    fi
+done < <(find /etc/systemd/system /etc/apt/apt.conf.d -type f 2>/dev/null)
+[[ $leaked -eq 0 ]] && pass "No Doppler token in any world-readable file"
+
+# ---------------------------------------------------------------------------
+head2 "Systemd"
+# ---------------------------------------------------------------------------
+if systemctl is-enabled "$UPDATE_TIMER" &>/dev/null; then
+    pass "$UPDATE_TIMER is enabled"
+else
+    fail "$UPDATE_TIMER is not enabled - automatic updates will not run"
+fi
+
+if systemctl cat "$UPGRADE_UNIT" 2>/dev/null | grep -q 'update-notifier.sh'; then
+    pass "Notifier is wired to $UPGRADE_UNIT"
+else
+    fail "Notifier is not wired to $UPGRADE_UNIT"
+fi
+
+echo ""
+systemctl list-timers "$UPDATE_TIMER" update-notifier.timer --no-pager 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+head2 "Notifier dry run"
+# ---------------------------------------------------------------------------
+if [[ -x /usr/local/bin/update-notifier.sh ]]; then
+    if out="$(PATCH_GREMLIN_DRY_RUN=true /usr/local/bin/update-notifier.sh 2>&1)"; then
+        pass "Dry run succeeded"
+    else
+        fail "Dry run failed: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+    fi
+else
+    fail "Notifier not executable"
+fi
+
+# ---------------------------------------------------------------------------
+head2 "Pending updates"
+# ---------------------------------------------------------------------------
+if [[ "$OS_TYPE" == "debian" ]]; then
+    apt-get update -qq 2>/dev/null || echo -e "${YELLOW}  (apt-get update failed; counts may be stale)${NC}"
+    # grep -c writes "0" AND exits 1 on no match, so `|| echo 0` would emit
+    # "0" twice and break the numeric comparison below.
+    upgradable="$(apt list --upgradable 2>/dev/null | grep -c 'upgradable from' || true)"
+    upgradable="${upgradable//[^0-9]/}"
+    echo "  Upgradable packages: ${upgradable:-0}"
+else
+    # dnf check-update exits 100 when updates exist - not an error.
+    out="$(dnf check-update -q 2>/dev/null)"; rc=$?
+    if [[ $rc -eq 0 || $rc -eq 100 ]]; then
+        upgradable="$(printf '%s\n' "$out" | grep -cvE '^(Last metadata|Obsoleting|Security:|$)' || true)"
+        upgradable="${upgradable//[^0-9]/}"
+        echo "  Upgradable packages: ${upgradable:-0}"
+    else
+        echo -e "${YELLOW}  dnf check-update failed with status $rc${NC}"
+    fi
+fi
+pass "Update check completed"
+
+# ---------------------------------------------------------------------------
+head2 "Live notification"
+# ---------------------------------------------------------------------------
+if [[ "$SKIP_LIVE" == "true" ]]; then
+    skip "Live notification test"
+else
+    do_live="$ASSUME_YES"
+    if [[ "$do_live" != "true" ]]; then
+        if [[ -t 0 ]]; then
+            read -rp "Send a real test notification now? (y/N): " reply || reply=""
+            [[ "$reply" =~ ^[Yy] ]] && do_live=true
+        fi
+    fi
+    if [[ "$do_live" == "true" ]]; then
+        systemctl start update-notifier.service 2>&1 || true
+        # Type=oneshot: `systemctl start` returns once it has finished.
+        code="$(systemctl show update-notifier.service --property=ExecMainStatus --value)"
+        if [[ "$code" == "0" ]]; then
+            pass "Live notification sent - check your channels"
+        else
+            fail "Live notification failed (exit $code); see journalctl -u update-notifier.service"
+        fi
+    else
+        skip "Live notification test"
+    fi
+fi
+
+# NB: this script no longer installs and removes a throwaway package to
+# exercise the hook. It ran `apt-get autoremove -y` afterwards, which can pull
+# far more than the test package on a production host.
+
+# ---------------------------------------------------------------------------
+head2 "Summary"
+# ---------------------------------------------------------------------------
+echo -e "  ${GREEN}Passed:${NC}  $PASSED"
+echo -e "  ${RED}Failed:${NC}  $FAILED"
+echo -e "  ${YELLOW}Skipped:${NC} $SKIPPED"
+echo ""
+if [[ $FAILED -gt 0 ]]; then
+    echo -e "${RED}Deployment test FAILED${NC}"
+    echo "Run sudo ./diagnose-config.sh for a detailed report."
     exit 1
 fi
-echo ""
-
-# Test 2: Check Secret Storage Mode
-echo -e "${BLUE}═══ Test 2: Secret Storage Mode ═══${NC}"
-test2_pass=true
-
-# Check which mode is configured
-# First, get systemd environment to a variable (more reliable than piping in conditionals)
-SYSTEMD_ENV=$(systemctl show update-notifier.service 2>/dev/null | grep "^Environment=" || echo "")
-
-if [[ -f /etc/update-notifier/secrets.conf ]]; then
-    echo -e "${GREEN}✓${NC} Local mode: /etc/update-notifier/secrets.conf exists"
-    SECRET_MODE="local"
-    
-    # Verify permissions
-    perms=$(stat -c "%a" /etc/update-notifier/secrets.conf)
-    if [[ "$perms" == "600" ]]; then
-        echo -e "${GREEN}✓${NC} File permissions are secure (600)"
-    else
-        echo -e "${YELLOW}⚠${NC} File permissions: $perms (should be 600)"
-        echo "   Fix with: sudo chmod 600 /etc/update-notifier/secrets.conf"
-        test2_pass=false
-    fi
-    
-    # Check if at least one webhook is configured
-    webhook_count=0
-    if grep -q '^DISCORD_WEBHOOK=.\+' /etc/update-notifier/secrets.conf 2>/dev/null; then
-        echo -e "${GREEN}✓${NC} Discord webhook configured"
-        ((webhook_count++))
-    fi
-    if grep -q '^TEAMS_WEBHOOK=.\+' /etc/update-notifier/secrets.conf 2>/dev/null; then
-        echo -e "${GREEN}✓${NC} Teams webhook configured"
-        ((webhook_count++))
-    fi
-    if grep -q '^SLACK_WEBHOOK=.\+' /etc/update-notifier/secrets.conf 2>/dev/null; then
-        echo -e "${GREEN}✓${NC} Slack webhook configured"
-        ((webhook_count++))
-    fi
-    if grep -q '^MATRIX_WEBHOOK=.\+' /etc/update-notifier/secrets.conf 2>/dev/null; then
-        echo -e "${GREEN}✓${NC} Matrix webhook configured"
-        ((webhook_count++))
-    fi
-    if grep -q '^MATRIX_HOMESERVER=.\+' /etc/update-notifier/secrets.conf 2>/dev/null; then
-        echo -e "${GREEN}✓${NC} Matrix API configured"
-        ((webhook_count++))
-    fi
-    
-    if [[ $webhook_count -eq 0 ]]; then
-        echo -e "${RED}✗${NC} No webhooks configured in secrets file"
-        echo "   Edit: sudo nano /etc/update-notifier/secrets.conf"
-        test2_pass=false
-    else
-        echo -e "${GREEN}✓${NC} $webhook_count platform(s) configured"
-    fi
-    
-elif [[ "$SYSTEMD_ENV" =~ DOPPLER_TOKEN= ]]; then
-    echo -e "${GREEN}✓${NC} Doppler mode: Token configured in systemd"
-    SECRET_MODE="doppler"
-    
-    # Check if doppler CLI is available
-    if command -v doppler &>/dev/null; then
-        echo -e "${GREEN}✓${NC} Doppler CLI is installed"
-    else
-        echo -e "${YELLOW}⚠${NC} Doppler CLI not found (not required for service operation)"
-        echo "   The service will work without CLI (uses embedded token)"
-    fi
-    
-    # Verify service has token
-    if [[ "$SYSTEMD_ENV" =~ DOPPLER_TOKEN=dp\.st\. ]]; then
-        echo -e "${GREEN}✓${NC} Valid Doppler service token format in systemd"
-    else
-        echo -e "${RED}✗${NC} Invalid or missing Doppler token in systemd service"
-        test2_pass=false
-    fi
-    
-else
-    echo -e "${RED}✗${NC} Cannot determine secret storage mode"
-    echo "   Neither /etc/update-notifier/secrets.conf nor systemd DOPPLER_TOKEN found"
-    echo ""
-    if [[ -n "$SYSTEMD_ENV" ]]; then
-        echo "   Debug: Found systemd Environment but no DOPPLER_TOKEN:"
-        # Redact any Doppler tokens before displaying
-        echo "   $SYSTEMD_ENV" | sed -E "s/DOPPLER_TOKEN=dp\.st\.[^ ]*/DOPPLER_TOKEN=***REDACTED***/g" | head -c 200
-        echo "..."
-    else
-        echo "   Debug: No systemd Environment found (service may not exist)"
-    fi
-    echo ""
-    echo "   Re-run setup: sudo ./setup-unattended-upgrades.sh"
-    SECRET_MODE="unknown"
-    test2_pass=false
-fi
-
-if [[ "$test2_pass" == "true" ]]; then
-    echo -e "${GREEN}Test 2: PASSED${NC}"
-else
-    echo -e "${RED}Test 2: FAILED${NC}"
-fi
-echo ""
-
-# Test 3: Systemd Service Status
-echo -e "${BLUE}═══ Test 3: Systemd Services ═══${NC}"
-test3_pass=true
-
-# Check update-notifier service
-if systemctl is-enabled update-notifier.timer &>/dev/null; then
-    echo -e "${GREEN}✓${NC} update-notifier.timer is enabled"
-else
-    echo -e "${YELLOW}⚠${NC} update-notifier.timer is not enabled"
-    test3_pass=false
-fi
-
-if systemctl is-active update-notifier.timer &>/dev/null; then
-    echo -e "${GREEN}✓${NC} update-notifier.timer is active"
-else
-    echo -e "${YELLOW}⚠${NC} update-notifier.timer is not active"
-    test3_pass=false
-fi
-
-# Check system update service
-if systemctl is-enabled "$UPDATE_TIMER" &>/dev/null; then
-    echo -e "${GREEN}✓${NC} $UPDATE_TIMER is enabled"
-else
-    echo -e "${YELLOW}⚠${NC} $UPDATE_TIMER is not enabled"
-    test3_pass=false
-fi
-
-# Show timer schedule
-echo ""
-echo "Timer schedules:"
-systemctl list-timers update-notifier.timer "$UPDATE_TIMER" --no-pager 2>/dev/null || true
-
-if [[ "$test3_pass" == "true" ]]; then
-    echo -e "${GREEN}Test 3: PASSED${NC}"
-else
-    echo -e "${YELLOW}Test 3: PASSED WITH WARNINGS${NC}"
-fi
-echo ""
-
-# Test 4: Manual Notification Test
-echo -e "${BLUE}═══ Test 4: Manual Notification Test ═══${NC}"
-echo "This will trigger a test notification immediately."
-read -p "Run test notification? (y/N): " -n 1 -r
-echo ""
-
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    echo "Starting notification service..."
-    if systemctl start update-notifier.service; then
-        echo -e "${GREEN}✓${NC} Service started successfully"
-        
-        echo "Waiting 5 seconds for notification to send..."
-        sleep 5
-        
-        echo "Checking service results..."
-        systemctl status update-notifier.service --no-pager || true
-        
-        # Check if service completed successfully (exit code 0)
-        # Note: systemctl status returns non-zero for "inactive" even if service succeeded
-        if systemctl show update-notifier.service --property=ExecMainStatus --value | grep -q "^0$"; then
-            echo ""
-            echo -e "${GREEN}✓${NC} Service completed successfully (exit code 0)"
-            echo "Check your configured notification channels for the update report!"
-            echo -e "${GREEN}Test 4: PASSED${NC}"
-        else
-            exit_code=$(systemctl show update-notifier.service --property=ExecMainStatus --value)
-            echo ""
-            echo -e "${RED}✗${NC} Service failed with exit code: $exit_code"
-            echo "Check logs: journalctl -u update-notifier.service -n 50"
-            echo -e "${RED}Test 4: FAILED${NC}"
-        fi
-    else
-        echo -e "${RED}✗${NC} Failed to start service"
-        echo -e "${RED}Test 4: FAILED${NC}"
-    fi
-else
-    echo "Skipped manual notification test"
-    echo -e "${YELLOW}Test 4: SKIPPED${NC}"
-fi
-echo ""
-
-# Test 5: Update System Test (Dry Run)
-echo -e "${BLUE}═══ Test 5: Update System Check ═══${NC}"
-
-if [[ "$OS_TYPE" == "debian" ]]; then
-    echo "Checking for available updates..."
-    apt-get update -qq
-    
-    upgradable=$(apt list --upgradable 2>/dev/null | grep -c upgradable || echo "0")
-    echo "Upgradable packages: $upgradable"
-    
-    if [[ $upgradable -gt 0 ]]; then
-        echo -e "${GREEN}✓${NC} Updates available for testing"
-        echo ""
-        echo "Available updates:"
-        apt list --upgradable 2>/dev/null | head -10
-    else
-        echo -e "${YELLOW}⚠${NC} No updates available (system is up to date)"
-        echo "To test, you can:"
-        echo "  1. Wait for new updates"
-        echo "  2. Use 'sudo apt-mark hold <package>' then 'sudo apt-mark unhold <package>'"
-    fi
-    
-    # Check unattended-upgrades configuration
-    if [[ -f /etc/apt/apt.conf.d/50unattended-upgrades ]]; then
-        echo -e "${GREEN}✓${NC} unattended-upgrades is configured"
-    fi
-    
-elif [[ "$OS_TYPE" == "rhel" ]]; then
-    echo "Checking for available updates..."
-    updates=$(dnf check-update -q 2>/dev/null | grep -v "^$" | wc -l || echo "0")
-    
-    echo "Available updates: $updates"
-    
-    if [[ $updates -gt 0 ]]; then
-        echo -e "${GREEN}✓${NC} Updates available for testing"
-        echo ""
-        echo "Available updates:"
-        dnf check-update 2>/dev/null | head -10
-    else
-        echo -e "${YELLOW}⚠${NC} No updates available (system is up to date)"
-    fi
-    
-    # Check dnf-automatic configuration
-    if [[ -f /etc/dnf/automatic.conf ]]; then
-        echo -e "${GREEN}✓${NC} dnf-automatic is configured"
-    fi
-fi
-
-echo -e "${GREEN}Test 5: PASSED${NC}"
-echo ""
-
-# Test 6: Hook Test (Safe)
-echo -e "${BLUE}═══ Test 6: Hook Execution Test ═══${NC}"
-echo "This tests if the notification hook would trigger correctly."
-echo ""
-
-if [[ "$OS_TYPE" == "debian" ]]; then
-    # Check if hook is properly configured
-    if grep -q "update-notifier.sh" "$HOOK_FILE"; then
-        echo -e "${GREEN}✓${NC} APT hook is configured"
-        
-        # Show hook content (redact sensitive tokens)
-        echo "Hook configuration:"
-        cat "$HOOK_FILE" | sed -E "s/(DOPPLER_TOKEN=')dp\.st\.[^']+/\1***REDACTED***/g"
-        echo ""
-        
-        # Test hook execution (this is safe, just runs the notifier)
-        read -p "Test APT hook by installing a small package (vim-tiny)? (y/N): " -n 1 -r
-        echo ""
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            echo "Installing vim-tiny (this will trigger the hook)..."
-            apt-get install -y vim-tiny
-            echo ""
-            echo "Check if notification was sent!"
-            echo "View logs: journalctl -xe | grep -i patch-gremlin"
-            echo ""
-            
-            # Offer to remove the test package
-            read -p "Remove vim-tiny test package? (Y/n): " -n 1 -r
-            echo ""
-            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                echo "Removing vim-tiny..."
-                apt-get remove -y vim-tiny
-                apt-get autoremove -y
-                echo "Test package removed"
-            fi
-        else
-            echo "Skipped hook test"
-        fi
-    else
-        echo -e "${RED}✗${NC} APT hook not configured correctly"
-    fi
-    
-elif [[ "$OS_TYPE" == "rhel" ]]; then
-    if [[ -f "$HOOK_FILE" ]]; then
-        echo -e "${GREEN}✓${NC} DNF hook is configured"
-        echo "Hook configuration:"
-        cat "$HOOK_FILE" | sed -E "s/(DOPPLER_TOKEN=')dp\.st\.[^']+/\1***REDACTED***/g"
-    else
-        echo -e "${RED}✗${NC} DNF hook not found"
-    fi
-fi
-
-echo -e "${GREEN}Test 6: PASSED${NC}"
-echo ""
-
-# Test 7: Log Check
-echo -e "${BLUE}═══ Test 7: Log Analysis ═══${NC}"
-
-echo "Recent Patch Gremlin activity:"
-journalctl -u update-notifier.service --no-pager -n 20 2>/dev/null || echo "No recent activity"
-
-echo ""
-echo "Recent system update activity:"
-if [[ "$OS_TYPE" == "debian" ]]; then
-    journalctl -u unattended-upgrades.service --no-pager -n 10 2>/dev/null || echo "No recent activity"
-else
-    journalctl -u dnf-automatic.service --no-pager -n 10 2>/dev/null || echo "No recent activity"
-fi
-
-echo -e "${GREEN}Test 7: COMPLETED${NC}"
-echo ""
-
-# Summary
-echo -e "${BLUE}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║                    Test Summary                          ║${NC}"
-echo -e "${BLUE}╚══════════════════════════════════════════════════════════╝${NC}"
-echo ""
-echo -e "Secret Mode: ${YELLOW}${SECRET_MODE}${NC}"
-echo -e "OS Type: ${YELLOW}${OS_TYPE}${NC}"
-echo ""
-echo "Next Steps:"
-echo "  1. Verify you received test notification(s)"
-echo "  2. Wait for scheduled update time to verify automatic operation"
-echo "  3. Monitor logs: journalctl -u update-notifier.service -f"
-echo ""
-echo "To manually trigger updates (for testing):"
-if [[ "$OS_TYPE" == "debian" ]]; then
-    echo "  sudo unattended-upgrades --debug --dry-run"
-    echo "  sudo unattended-upgrades"
-else
-    echo "  sudo dnf-automatic --downloadupdates"
-    echo "  sudo dnf-automatic"
-fi
-echo ""
-echo -e "${GREEN}All tests completed!${NC}"
+echo -e "${GREEN}Deployment test PASSED${NC}"
+exit 0

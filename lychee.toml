@@ -1,0 +1,30 @@
+# Link-checker configuration for Patch Gremlin.
+#
+# Migrated from .markdown-link-check.json when CI moved to lychee (the
+# previous action, gaurav-nelson/github-action-markdown-link-check, is
+# archived). The settings below are deliberately the same ones that config
+# carried - dropping them is what broke the Documentation workflow.
+
+# Placeholder webhook URLs appear throughout the docs as examples.
+exclude = [
+  '^https://discord\.com/api/webhooks/',
+  '^https://hooks\.slack\.com/services/',
+  '^https://.*webhook.*',
+  # Release tags do not exist until the release is actually cut, so linking
+  # to the tag for the version being prepared is expected to 404 on the PR.
+  '^https://github\.com/ChiefGyk3D/Patch-Gremlin/releases/tag/',
+]
+
+# Redirects and bot-blocking are not broken links. Patreon returns 403 to
+# datacentre IPs and the Matrix invite URL is a 302 to the room.
+accept = ["200", "206", "301", "302", "403", "429"]
+
+timeout = 20
+max_retries = 3
+retry_wait_time = 5
+max_concurrency = 8
+
+# Anonymous datacentre requests get blocked more often without one.
+user_agent = "Mozilla/5.0 (compatible; lychee link checker; +https://github.com/lycheeverse/lychee)"
+
+no_progress = true

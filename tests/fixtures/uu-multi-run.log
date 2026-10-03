@@ -1,0 +1,6 @@
+2025-08-10 06:00:00,000 INFO Starting unattended upgrades script
+2025-08-10 06:00:01,000 INFO Packages that will be upgraded: oldpkg1 oldpkg2 oldpkg3 oldpkg4
+2025-08-10 06:00:05,000 INFO All upgrades installed
+2025-08-20 06:17:15,236 INFO Starting unattended upgrades script
+2025-08-20 06:17:18,123 INFO Packages that will be upgraded: newpkg1 newpkg2
+2025-08-20 06:18:02,456 INFO All upgrades installed

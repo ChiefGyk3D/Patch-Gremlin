@@ -1,143 +1,148 @@
 #!/bin/bash
-
-# Patch Gremlin - Configure Verbose Logging
-# Enable or disable debug/verbose output from unattended-upgrades
-# Run this to adjust logging verbosity
+#
+# Patch Gremlin - Configure verbose logging
+# Enables or disables debug output from unattended-upgrades.
 
 set -euo pipefail
 
-# Color definitions
+PATCH_GREMLIN_VERSION="2.0.0"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Check if running as root
-if [[ $EUID -ne 0 ]]; then
-   echo -e "${RED}Error: This script must be run as root${NC}" 
-   echo "Please run: sudo $0"
-   exit 1
+PG_ROOT="${PATCH_GREMLIN_ROOT:-}"
+p() { printf '%s%s' "$PG_ROOT" "$1"; }
+
+UU_CONF="$(p /etc/apt/apt.conf.d/50unattended-upgrades)"
+PERIODIC_CONF="$(p /etc/apt/apt.conf.d/20auto-upgrades)"
+BACKUP_DIR="$(p /var/backups/patch-gremlin)"
+
+usage() {
+    cat <<EOF
+Patch Gremlin verbosity control v${PATCH_GREMLIN_VERSION}
+
+Usage: sudo ./configure-verbosity.sh [OPTIONS]
+
+Options:
+  -q, --quiet     Disable verbose logging (recommended)
+  -v, --verbose   Enable debug logging
+  -s, --show      Show the current setting and exit
+  -h, --help      Show this help and exit
+  -V, --version   Show the version and exit
+
+With no option an interactive prompt is shown.
+EOF
+}
+
+TARGET=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -q|--quiet)   TARGET="false" ;;
+        -v|--verbose) TARGET="true" ;;
+        -s|--show)    TARGET="show" ;;
+        -h|--help)    usage; exit 0 ;;
+        -V|--version) echo "patch-gremlin $PATCH_GREMLIN_VERSION"; exit 0 ;;
+        *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+    shift
+done
+
+if [[ -z "$PG_ROOT" && $EUID -ne 0 ]]; then
+    echo -e "${RED}Error: This script must be run as root${NC}" >&2
+    echo "Please run: sudo $0" >&2
+    exit 1
 fi
 
-echo -e "${YELLOW}Configure Verbose Logging${NC}"
-echo ""
-echo "Current verbose logging status:"
-
-# Check current settings
-if [[ -f /etc/apt/apt.conf.d/50unattended-upgrades ]]; then
-    if grep -q 'Unattended-Upgrade::Verbose "true"' /etc/apt/apt.conf.d/50unattended-upgrades; then
-        echo -e "  50unattended-upgrades: ${GREEN}ENABLED${NC}"
+show_current() {
+    echo "Current verbose logging status:"
+    if [[ -f "$UU_CONF" ]]; then
+        if grep -q 'Unattended-Upgrade::Verbose[[:space:]]*"true"' "$UU_CONF"; then
+            echo -e "  50unattended-upgrades: ${GREEN}ENABLED${NC}"
+        else
+            echo -e "  50unattended-upgrades: ${BLUE}DISABLED${NC}"
+        fi
     else
-        echo -e "  50unattended-upgrades: ${BLUE}DISABLED${NC}"
+        echo -e "  ${RED}50unattended-upgrades not found${NC}"
     fi
-else
-    echo -e "  ${RED}50unattended-upgrades not found${NC}"
-fi
 
-if [[ -f /etc/apt/apt.conf.d/20auto-upgrades ]]; then
-    VERBOSE_VAL=$(grep 'APT::Periodic::Verbose' /etc/apt/apt.conf.d/20auto-upgrades | grep -oP '\d+' || echo "0")
-    if [[ "$VERBOSE_VAL" == "0" ]]; then
-        echo -e "  20auto-upgrades: ${BLUE}DISABLED${NC} (Verbose: $VERBOSE_VAL)"
+    if [[ -f "$PERIODIC_CONF" ]]; then
+        # grep -oP is a GNU/PCRE extension; use a portable expression instead.
+        local val
+        val="$(sed -n 's/.*APT::Periodic::Verbose[[:space:]]*"\([0-9]*\)".*/\1/p' "$PERIODIC_CONF" | tail -1)"
+        val="${val:-0}"
+        if [[ "$val" == "0" ]]; then
+            echo -e "  20auto-upgrades: ${BLUE}DISABLED${NC} (Verbose: $val)"
+        else
+            echo -e "  20auto-upgrades: ${GREEN}ENABLED${NC} (Verbose: $val)"
+        fi
     else
-        echo -e "  20auto-upgrades: ${GREEN}ENABLED${NC} (Verbose: $VERBOSE_VAL)"
+        echo -e "  ${RED}20auto-upgrades not found${NC}"
     fi
-else
-    echo -e "  ${RED}20auto-upgrades not found${NC}"
+}
+
+show_current
+
+if [[ "$TARGET" == "show" ]]; then
+    exit 0
 fi
 
-echo ""
-echo "What would you like to do?"
-echo "  1) Disable verbose logging (quiet - recommended)"
-echo "  2) Enable verbose logging (debug)"
-echo "  3) Cancel"
-echo ""
-read -p "Enter choice [1-3] (default: 1): " -n 1 -r CHOICE
-echo ""
-echo ""
+if [[ -z "$TARGET" ]]; then
+    if [[ ! -t 0 ]]; then
+        echo -e "${RED}Error: no TTY; pass --quiet or --verbose${NC}" >&2
+        exit 2
+    fi
+    echo ""
+    echo "  1) Disable verbose logging (quiet - recommended)"
+    echo "  2) Enable verbose logging (debug)"
+    echo "  3) Cancel"
+    read -rp "Enter choice [1-3] (default: 1): " choice || choice=""
+    case "$choice" in
+        2) TARGET="true" ;;
+        3) echo "Cancelled."; exit 0 ;;
+        *) TARGET="false" ;;
+    esac
+fi
 
-case "$CHOICE" in
-    2)
-        TARGET_VERBOSE="true"
-        TARGET_PERIODIC="2"
-        ACTION="Enabling"
-        ;;
-    3)
-        echo "Cancelled."
-        exit 0
-        ;;
-    *)
-        TARGET_VERBOSE="false"
-        TARGET_PERIODIC="0"
-        ACTION="Disabling"
-        ;;
-esac
+if [[ "$TARGET" == "true" ]]; then
+    PERIODIC_VALUE=2
+    ACTION="Enabling"
+else
+    PERIODIC_VALUE=0
+    ACTION="Disabling"
+fi
 
 echo -e "${YELLOW}${ACTION} verbose logging...${NC}"
-echo ""
 
-# Backup existing configs
-if [[ -f /etc/apt/apt.conf.d/50unattended-upgrades ]]; then
-    cp /etc/apt/apt.conf.d/50unattended-upgrades \
-       "/etc/apt/apt.conf.d/50unattended-upgrades.backup.$(date +%Y%m%d-%H%M%S)"
-    echo -e "${GREEN}✓${NC} Backed up 50unattended-upgrades"
-fi
+# Backups go outside apt.conf.d - APT warns about every unrecognised file
+# extension there on each invocation.
+backup() {
+    local f="$1"
+    [[ -f "$f" ]] || return 0
+    mkdir -p "$BACKUP_DIR"
+    cp "$f" "$BACKUP_DIR/$(basename "$f").$(date +%Y%m%d-%H%M%S)"
+    echo -e "${GREEN}✓${NC} Backed up $(basename "$f")"
+}
 
-if [[ -f /etc/apt/apt.conf.d/20auto-upgrades ]]; then
-    cp /etc/apt/apt.conf.d/20auto-upgrades \
-       "/etc/apt/apt.conf.d/20auto-upgrades.backup.$(date +%Y%m%d-%H%M%S)"
-    echo -e "${GREEN}✓${NC} Backed up 20auto-upgrades"
-fi
-
-# Update 50unattended-upgrades
-if [[ -f /etc/apt/apt.conf.d/50unattended-upgrades ]]; then
-    if grep -q 'Unattended-Upgrade::Verbose' /etc/apt/apt.conf.d/50unattended-upgrades; then
-        sed -i "s/Unattended-Upgrade::Verbose \".*\"/Unattended-Upgrade::Verbose \"$TARGET_VERBOSE\"/" \
-            /etc/apt/apt.conf.d/50unattended-upgrades
-        echo -e "${GREEN}✓${NC} Updated 50unattended-upgrades: Verbose=$TARGET_VERBOSE"
+set_directive() {
+    local file="$1" key="$2" value="$3" quoted="$4"
+    [[ -f "$file" ]] || { echo -e "${RED}✗${NC} $file not found"; return 1; }
+    # Drop any commented-out copies so the active setting is unambiguous.
+    sed -i "\\|^[[:space:]]*//[[:space:]]*${key}|d" "$file"
+    if grep -q "^[[:space:]]*${key}" "$file"; then
+        sed -i "s|^[[:space:]]*${key}[[:space:]]*\"[^\"]*\";|${key} ${quoted}${value}${quoted};|" "$file"
     else
-        echo -e "${YELLOW}⚠${NC} Verbose setting not found in 50unattended-upgrades"
+        echo "${key} ${quoted}${value}${quoted};" >> "$file"
     fi
-else
-    echo -e "${RED}✗${NC} /etc/apt/apt.conf.d/50unattended-upgrades not found"
-fi
+    echo -e "${GREEN}✓${NC} $(basename "$file"): ${key} = ${value}"
+}
 
-# Update 20auto-upgrades
-if [[ -f /etc/apt/apt.conf.d/20auto-upgrades ]]; then
-    if grep -q 'APT::Periodic::Verbose' /etc/apt/apt.conf.d/20auto-upgrades; then
-        sed -i "s/APT::Periodic::Verbose \"[0-9]\"/APT::Periodic::Verbose \"$TARGET_PERIODIC\"/" \
-            /etc/apt/apt.conf.d/20auto-upgrades
-        echo -e "${GREEN}✓${NC} Updated 20auto-upgrades: Verbose=$TARGET_PERIODIC"
-    else
-        echo -e "${YELLOW}⚠${NC} Verbose setting not found in 20auto-upgrades"
-    fi
-else
-    echo -e "${RED}✗${NC} /etc/apt/apt.conf.d/20auto-upgrades not found"
-fi
+backup "$UU_CONF"
+backup "$PERIODIC_CONF"
+set_directive "$UU_CONF" "Unattended-Upgrade::Verbose" "$TARGET" '"' || true
+set_directive "$PERIODIC_CONF" "APT::Periodic::Verbose" "$PERIODIC_VALUE" '"' || true
 
 echo ""
-echo -e "${GREEN}Configuration complete!${NC}"
-echo ""
-
-if [[ "$TARGET_VERBOSE" == "false" ]]; then
-    echo "Verbose logging is now DISABLED."
-    echo ""
-    echo "You'll see important messages like:"
-    echo "  - When updates are installed"
-    echo "  - If any errors occur"
-    echo "  - Summary of changes"
-    echo ""
-    echo "But you won't see detailed DEBUG output."
-else
-    echo "Verbose logging is now ENABLED."
-    echo ""
-    echo "You'll see detailed DEBUG output including:"
-    echo "  - Package checking details"
-    echo "  - Origin pattern matching"
-    echo "  - Candidate version adjustments"
-    echo ""
-    echo "This is useful for troubleshooting but creates large logs."
-fi
-
-echo ""
-echo "Changes will take effect on the next unattended-upgrades run."
+echo -e "${GREEN}Done.${NC} Changes take effect on the next unattended-upgrades run."

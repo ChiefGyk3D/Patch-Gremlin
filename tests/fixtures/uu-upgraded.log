@@ -1,0 +1,5 @@
+2025-08-20 06:17:15,236 INFO Starting unattended upgrades script
+2025-08-20 06:17:15,236 INFO Allowed origins are: o=Debian,n=bookworm, o=Debian,n=bookworm-security
+2025-08-20 06:17:18,123 INFO Packages that will be upgraded: libssl3 openssl curl
+2025-08-20 06:17:18,124 INFO Writing dpkg log to /var/log/unattended-upgrades/unattended-upgrades-dpkg.log
+2025-08-20 06:18:02,456 INFO All upgrades installed
