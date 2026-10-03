@@ -33,10 +33,27 @@ jobs:
           echo "Syntax check: $script"
           bash -n "$script"
         done
+        if [ -x tests/run.sh ]; then
+          export PATH="$HOME/.local/bin:$PATH"
+          ./tests/run.sh
+        else
+          echo "Executable Bats test entry point is not present; syntax checks passed."
+        fi
+      test-install-command: |
+        if [ -x tests/run.sh ]; then
+          bats_source=$(mktemp -d)
+          trap 'rm -rf "$bats_source"' EXIT
+          # bats-core v1.14.0 at eb7f42f8d608ac693d7a4b67474f6714ea68cfc5
+          git clone --quiet --depth 1 --branch v1.14.0 \
+            https://github.com/bats-core/bats-core.git "$bats_source"
+          test "$(git -C "$bats_source" rev-parse HEAD)" = "eb7f42f8d608ac693d7a4b67474f6714ea68cfc5"
+          "$bats_source/install.sh" "$HOME/.local"
+        fi
       distros: '["debian:13", "debian:12", "ubuntu:22.04", "ubuntu:24.04"]'
-      distro-setup-command: apt-get update && apt-get install -y bash git ca-certificates
+      distro-setup-command: apt-get update && apt-get install -y bash git ca-certificates python3
       config-lint-install-command: pip install yamllint
       config-lint-command: yamllint -c .yamllint.yml .github/workflows
       egress-policy: block
       # raven-actions/actionlint installs from npm and fetches from raw.githubusercontent.com; zizmor pulls its image from ghcr.io.
-      extra-allowed-endpoints: ghcr.io:443 pkg-containers.githubusercontent.com:443 raw.githubusercontent.com:443 registry.npmjs.org:443
+      extra-allowed-endpoints: >-
+        ghcr.io:443 pkg-containers.githubusercontent.com:443 raw.githubusercontent.com:443 registry.npmjs.org:443
