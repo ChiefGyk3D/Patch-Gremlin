@@ -25,4 +25,11 @@ jobs:
       config-lint-install-command: pip install yamllint
       config-lint-command: |
         yamllint .
+      # The old test.yml only ran `bash -n` over the scripts in debian and
+      # ubuntu containers; this keeps exactly that, on x86_64 and arm64.
+      test-command: |
+        git ls-files -z '*.sh' | xargs -0 -n1 bash -n
+      runners: '["ubuntu-24.04", "ubuntu-24.04-arm"]'
+      distros: '["debian:12", "debian:13", "ubuntu:24.04"]'
+      distro-runners: '["ubuntu-24.04", "ubuntu-24.04-arm"]'
       egress-policy: block
