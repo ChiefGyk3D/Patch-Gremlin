@@ -36,4 +36,4 @@ jobs:
       distros: '["debian:12", "debian:13", "ubuntu:24.04"]'
       distro-runners: '["ubuntu-24.04", "ubuntu-24.04-arm"]'
       egress-policy: block
-      extra-allowed-endpoints: raw.githubusercontent.com:443 registry.npmjs.org:443   # raven-actions/actionlint fetches its matcher and installs @actions/tool-cache with npm
+      extra-allowed-endpoints: ghcr.io:443 pkg-containers.githubusercontent.com:443 raw.githubusercontent.com:443 registry.npmjs.org:443   # workflow-lint: actionlint (matcher, npm) and the zizmor image
