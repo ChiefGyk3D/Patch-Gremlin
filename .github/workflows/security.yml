@@ -1,66 +1,33 @@
-name: Security Checks
+# CodeQL, gitleaks, a dependency audit and dependency review on pull
+# requests. The jobs live in ChiefGyk3D/git-your-ship-together.
+name: Security
 
 on:
   push:
-    branches: [main, develop, doppler_setup_fix]
-  pull_request:
     branches: [main]
+  pull_request:
   schedule:
-    # Run security checks weekly on Mondays at 9 AM UTC
-    - cron: '0 9 * * 1'
+    - cron: '0 6 * * 1'   # weekly, so new advisories surface between commits
+  workflow_dispatch:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
-  shellcheck:
-    name: ShellCheck Linting
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Run ShellCheck
-        uses: ludeeus/action-shellcheck@master
-        with:
-          scandir: '.'
-          severity: warning
-          ignore_paths: .git monitoring
-
-  security-scan:
-    name: Security Vulnerability Scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-
-      - name: Upload Trivy results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: 'trivy-results.sarif'
-
-  secret-scan:
-    name: Secret Scanning
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Full history for better detection
-
-      - name: Gitleaks Security Scan
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+  security:
+    uses: ChiefGyk3D/git-your-ship-together/.github/workflows/security.yml@0e58a0e61ea8b3800d1cb0e6ed81bb860ace2094 # v1.6.3
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+      id-token: write
+    secrets:
+      DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}   # optional Service Token fallback; unset means OIDC only
+    with:
+      codeql-languages: actions   # no Python here; CodeQL fails on a language with no source
+      pip-audit-requirements: ""
+      scorecard: true
+      egress-policy: block
+      doppler-project: ci
+      doppler-config: ci
+      doppler-identity-id: ${{ vars.DOPPLER_IDENTITY_ID }}
