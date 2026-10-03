@@ -50,7 +50,7 @@ jobs:
           "$bats_source/install.sh" "$HOME/.local"
         fi
       distros: '["debian:13", "debian:12", "ubuntu:22.04", "ubuntu:24.04"]'
-      distro-setup-command: apt-get update && apt-get install -y bash git ca-certificates
+      distro-setup-command: apt-get update && apt-get install -y bash git ca-certificates python3
       config-lint-install-command: pip install yamllint
       config-lint-command: yamllint -c .yamllint.yml .github/workflows
       egress-policy: block
