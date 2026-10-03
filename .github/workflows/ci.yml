@@ -38,3 +38,5 @@ jobs:
       config-lint-install-command: pip install yamllint
       config-lint-command: yamllint -c .yamllint.yml .github/workflows
       egress-policy: block
+      # raven-actions/actionlint installs its toolchain from the npm registry.
+      extra-allowed-endpoints: registry.npmjs.org:443

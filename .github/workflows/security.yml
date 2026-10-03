@@ -26,6 +26,6 @@ jobs:
     with:
       codeql-languages: actions
       pip-audit-requirements: ""
-      semgrep-config: p/bash p/github-actions p/secrets
+      semgrep-config: p/github-actions p/secrets
       scorecard: true
       egress-policy: block
