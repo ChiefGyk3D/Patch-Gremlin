@@ -1,6 +1,6 @@
 # CodeQL (the workflow files), gitleaks, Semgrep, dependency review and
-# Scorecard, from ChiefGyk3D/git-your-ship-together. No Python and no
-# secret: nothing here reads Doppler.
+# Scorecard and Snyk, from ChiefGyk3D/git-your-ship-together. No Python; Snyk
+# gets its token from Doppler over OIDC.
 name: Security
 
 on:
@@ -29,3 +29,8 @@ jobs:
       semgrep-config: p/github-actions p/secrets
       scorecard: true
       egress-policy: block
+      # Snyk reads SNYK_TOKEN from the Doppler config over OIDC (no stored secret).
+      snyk: true
+      doppler-project: ci
+      doppler-config: ci
+      doppler-identity-id: ${{ vars.DOPPLER_IDENTITY_ID }}
