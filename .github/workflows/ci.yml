@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   ci:
-    uses: ChiefGyk3D/git-your-ship-together/.github/workflows/bash-ci.yml@e5c6ec3251cf3a6eea100a1c21736f1818d5efc7 # v1.23.0
+    uses: ChiefGyk3D/git-your-ship-together/.github/workflows/bash-ci.yml@b9db99287236b19f0249f83b54acc5cc41126e42 # v1.25.0
     permissions:
       contents: read
     with:
