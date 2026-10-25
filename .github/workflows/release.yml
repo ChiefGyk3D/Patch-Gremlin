@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   artifacts:
-    uses: ChiefGyk3D/git-your-ship-together/.github/workflows/artifact-release.yml@e5c6ec3251cf3a6eea100a1c21736f1818d5efc7 # v1.23.0
+    uses: ChiefGyk3D/git-your-ship-together/.github/workflows/artifact-release.yml@6f40107c2e05483f485452991e422f7f63886000 # v1.25.1
     permissions:
       contents: write
       id-token: write
