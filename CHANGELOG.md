@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Security
+### Security hardening
 
 - Harden secret handling: the notifier parses `config.sh` and `secrets.conf`
   instead of sourcing them, the installer quotes values safely and rejects
