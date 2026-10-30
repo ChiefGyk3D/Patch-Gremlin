@@ -536,7 +536,7 @@ chat-formatted message:
   "pending_total": 12,
   "pending_security": 2,
   "timestamp": "2026-08-21T02:14:07.000Z",
-  "version": "2.0.0"
+  "version": "2.0.1"
 }
 ```
 
