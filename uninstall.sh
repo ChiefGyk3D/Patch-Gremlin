@@ -95,10 +95,15 @@ rm -f "$(p /etc/systemd/system/apt-daily-upgrade.service.d/patch-gremlin.conf)" 
       "$(p /etc/systemd/system/dnf5-automatic.service.d/patch-gremlin.conf)" \
       "$(p /etc/systemd/system/yum-cron.service.d/patch-gremlin.conf)" \
       "$(p /etc/apt/apt.conf.d/99patch-gremlin-notification)"
-rm -rf "$(p /etc/systemd/system/apt-daily-upgrade.timer.d)" \
-       "$(p /etc/systemd/system/dnf-automatic.timer.d)" \
-       "$(p /etc/systemd/system/dnf5-automatic.timer.d)"
-for d in /etc/systemd/system/apt-daily-upgrade.service.d \
+# Only our own drop-in goes; the directories may hold other admins' files, so
+# they are removed only if they end up empty.
+rm -f "$(p /etc/systemd/system/apt-daily-upgrade.timer.d/patch-gremlin.conf)" \
+      "$(p /etc/systemd/system/dnf-automatic.timer.d/patch-gremlin.conf)" \
+      "$(p /etc/systemd/system/dnf5-automatic.timer.d/patch-gremlin.conf)"
+for d in /etc/systemd/system/apt-daily-upgrade.timer.d \
+         /etc/systemd/system/dnf-automatic.timer.d \
+         /etc/systemd/system/dnf5-automatic.timer.d \
+         /etc/systemd/system/apt-daily-upgrade.service.d \
          /etc/systemd/system/dnf-automatic.service.d \
          /etc/systemd/system/dnf5-automatic.service.d \
          /etc/systemd/system/yum-cron.service.d \

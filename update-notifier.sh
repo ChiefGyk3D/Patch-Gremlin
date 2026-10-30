@@ -217,7 +217,7 @@ parse_upgraded_packages() {
     if [[ "$os_type" == "debian" ]]; then
         # Last occurrence wins so we describe the most recent run only.
         local line
-        line="$(grep 'Packages that will be upgraded:' "$log_file" 2>/dev/null | tail -n 1 || true)"
+        line="$(grep -a 'Packages that will be upgraded:' "$log_file" 2>/dev/null | tail -n 1 || true)"
         [[ -n "$line" ]] || return 0
         local names="${line#*Packages that will be upgraded:}"
         # Deliberate word splitting: normalises runs of whitespace into a
@@ -242,7 +242,7 @@ parse_upgraded_packages() {
         name="${name%-*}"      # strip -release
         name="${name%-*}"      # strip -version
         [[ -n "$name" ]] && out+=("$name")
-    done < <(printf '%s\n' "$block" | grep -oE 'Upgraded: *[^ ]+' | sed 's/Upgraded: *//' || true)
+    done < <(printf '%s\n' "$block" | grep -aoE 'Upgraded: *[^ ]+' | sed 's/Upgraded: *//' || true)
 
     [[ ${#out[@]} -gt 0 ]] || return 0
     printf '%s\n' "${out[*]}"
@@ -252,13 +252,13 @@ parse_upgraded_packages() {
 parse_kept_back() {
     local log_file="$1"
     [[ -r "$log_file" ]] || return 0
-    grep 'kept back' "$log_file" 2>/dev/null | tail -n 1 | sed 's/.*kept back:[[:space:]]*//' || true
+    grep -a 'kept back' "$log_file" 2>/dev/null | tail -n 1 | sed 's/.*kept back:[[:space:]]*//' || true
 }
 
 parse_last_error() {
     local log_file="$1"
     [[ -r "$log_file" ]] || return 0
-    grep -E '(ERROR|CRITICAL)' "$log_file" 2>/dev/null | tail -n 1 | sed 's/^[0-9:,. -]*\(ERROR\|CRITICAL\)[[:space:]]*//' || true
+    grep -aE '(ERROR|CRITICAL)' "$log_file" 2>/dev/null | tail -n 1 | sed 's/^[0-9:,. -]*\(ERROR\|CRITICAL\)[[:space:]]*//' || true
 }
 
 # ---------------------------------------------------------------------------
@@ -425,7 +425,34 @@ validate_webhook() {
     return 0
 }
 
-# http_post <url> <payload-file> <platform> [method] [extra curl args...]
+# Quote a value for a curl config file (-K): backslash, double quote and the
+# control characters curl's parser treats specially.
+curl_config_quote() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '"%s"' "$s"
+}
+
+# make_curl_config <url> [header...]
+# Sets MAKE_TEMP_RESULT to a mode-600 curl config file (removed by cleanup).
+make_curl_config() {
+    local url="$1" h
+    shift
+    make_temp
+    chmod 600 "$MAKE_TEMP_RESULT"
+    {
+        printf 'url = %s\n' "$(curl_config_quote "$url")"
+        for h in "$@"; do
+            [[ -n "$h" ]] && printf 'header = %s\n' "$(curl_config_quote "$h")"
+        done
+    } > "$MAKE_TEMP_RESULT"
+}
+
+# http_post <url> <payload-file> <platform> [method] [-H <header>]...
 http_post() {
     local url="$1" payload_file="$2" platform="$3" method="${4:-POST}"
     shift 4 2>/dev/null || shift 3
@@ -435,11 +462,21 @@ http_post() {
         return 0
     fi
 
+    # The URL (often itself a credential) and any extra "-H <header>" pairs go
+    # in a private curl config file, never on the command line where any local
+    # user can read them from the process table.
+    local -a headers=()
+    while [[ $# -gt 0 ]]; do
+        if [[ "$1" == "-H" && $# -ge 2 ]]; then headers+=("$2"); shift 2; else shift; fi
+    done
+    make_curl_config "$url" "${headers[@]:-}"
+    local cfg="$MAKE_TEMP_RESULT"
+
     local i response http_code
     for ((i = 1; i <= RETRY_COUNT; i++)); do
         response="$(curl -sS -w '\n%{http_code}' --max-time "$CURL_TIMEOUT" \
             -H 'Content-Type: application/json' \
-            -X "$method" -d @"$payload_file" "$@" "$url" 2>/dev/null || printf '\n000')"
+            -X "$method" -d @"$payload_file" -K "$cfg" 2>/dev/null || printf '\n000')"
         http_code="$(printf '%s' "$response" | tail -n1 | tr -cd '0-9')"
         http_code="${http_code:-0}"
 
@@ -591,9 +628,10 @@ notify_gotify() {
   "priority": ${GOTIFY_PRIORITY:-5}
 }
 EOF
-    local target="$url"
-    [[ -n "${GOTIFY_TOKEN:-}" ]] && target="${url}?token=${GOTIFY_TOKEN}"
-    if http_post "$target" "$tmp" "Gotify"; then record_result Gotify true; else record_result Gotify false; fi
+    # The token goes in a header (via the curl config file), not the URL.
+    local -a auth=()
+    [[ -n "${GOTIFY_TOKEN:-}" ]] && auth=(-H "X-Gotify-Key: ${GOTIFY_TOKEN}")
+    if http_post "$url" "$tmp" "Gotify" POST "${auth[@]:-}"; then record_result Gotify true; else record_result Gotify false; fi
 }
 
 notify_webhook_generic() {
@@ -655,9 +693,13 @@ EOF
 matrix_logout() {
     [[ "$MATRIX_SESSION_OWNED" == "true" ]] || return 0
     [[ -n "$MATRIX_SESSION_TOKEN" ]] || return 0
-    curl -sS --max-time "$CURL_TIMEOUT" -X POST \
-        -H "Authorization: Bearer $MATRIX_SESSION_TOKEN" \
-        "${MATRIX_HOMESERVER%/}/_matrix/client/v3/logout" >/dev/null 2>&1 || true
+    # Runs from the EXIT trap after the temp-file sweep, so this config file is
+    # removed here rather than through the cleanup list.
+    make_curl_config "${MATRIX_HOMESERVER%/}/_matrix/client/v3/logout" \
+        "Authorization: Bearer $MATRIX_SESSION_TOKEN"
+    local cfg="$MAKE_TEMP_RESULT"
+    curl -sS --max-time "$CURL_TIMEOUT" -X POST -K "$cfg" >/dev/null 2>&1 || true
+    rm -f "$cfg"
     MATRIX_SESSION_OWNED=false
     MATRIX_SESSION_TOKEN=""
 }
@@ -676,6 +718,12 @@ urlencode() {
 
 notify_matrix_api() {
     local tmp txn url
+    # Credentials (password or access token) go to the homeserver: https only.
+    if [[ ! "${MATRIX_HOMESERVER:-}" =~ ^https:// ]]; then
+        log "WARNING: Matrix homeserver must be an https:// URL, refusing to send"
+        record_result Matrix false
+        return
+    fi
     if [[ -n "${MATRIX_ACCESS_TOKEN:-}" ]]; then
         MATRIX_SESSION_TOKEN="$MATRIX_ACCESS_TOKEN"
     elif ! matrix_login; then
@@ -732,6 +780,60 @@ file_is_safe() {
     return 0
 }
 
+# Undo one layer of quoting on a KEY=VALUE value, without evaluating anything.
+#   "..."  double quotes; \\ \" \$ \` are unescaped (the installer escapes
+#          \ and "; the $ and ` forms are what older installs wrote by hand)
+#   '...'  single quotes, taken literally
+#   other  taken literally
+unquote_value() {
+    local v="$1" out="" c next i
+    if [[ "$v" == \"*\" && ${#v} -ge 2 ]]; then
+        v="${v:1:${#v}-2}"
+        for ((i = 0; i < ${#v}; i++)); do
+            c="${v:i:1}"
+            if [[ "$c" == "\\" && $((i + 1)) -lt ${#v} ]]; then
+                next="${v:i+1:1}"
+                case "$next" in
+                    '\'|'"'|'$'|'`') out+="$next"; i=$((i + 1)); continue ;;
+                esac
+            fi
+            out+="$c"
+        done
+        printf '%s' "$out"
+    elif [[ "$v" == \'*\' && ${#v} -ge 2 ]]; then
+        printf '%s' "${v:1:${#v}-2}"
+    else
+        printf '%s' "$v"
+    fi
+}
+
+# parse_kv_file <file> <key-allowlist-regex>
+# Reads KEY=VALUE lines (optional leading "export "), keeps only allowlisted
+# keys, and assigns the value literally. Unknown keys are reported by name
+# only and ignored.
+parse_kv_file() {
+    local file="$1" allow="$2" line key value
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        line="${line#export }"
+        [[ "$line" == *=* ]] || continue
+        key="${line%%=*}"; value="${line#*=}"
+        key="${key//[[:space:]]/}"
+        if [[ ! "$key" =~ $allow ]]; then
+            [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && log "NOTE: ignoring unrecognised key $key in $file"
+            continue
+        fi
+        value="$(unquote_value "$value"; printf x)"; value="${value%x}"
+        case "$key" in
+            NTFY_PRIORITY|GOTIFY_PRIORITY)
+                [[ "$value" =~ ^[0-9]+$ ]] || { log "NOTE: ignoring non-numeric $key"; continue; } ;;
+        esac
+        printf -v "$key" '%s' "$value"
+    done < "$file"
+}
+
 load_secrets() {
     # All notification variables start empty so `set -u` can never fire on them.
     DISCORD_WEBHOOK=""; TEAMS_WEBHOOK=""; SLACK_WEBHOOK=""
@@ -756,14 +858,15 @@ load_secrets() {
         done < "$ENV_FILE"
     fi
 
+    # Both files are parsed as allowlisted KEY=VALUE and never sourced: values
+    # are taken literally, so nothing in them can execute as root.
     if [[ -f "$CONFIG_FILE" ]] && file_is_safe "$CONFIG_FILE"; then
-        # shellcheck source=/dev/null
-        source "$CONFIG_FILE"
+        parse_kv_file "$CONFIG_FILE" '^(SECRET_MODE|DOPPLER_[A-Z0-9_]+_SECRET)$'
     fi
 
     if [[ -f "$SECRETS_FILE" ]] && file_is_safe "$SECRETS_FILE"; then
-        # shellcheck source=/dev/null
-        source "$SECRETS_FILE"
+        parse_kv_file "$SECRETS_FILE" \
+            '^(SECRET_MODE|DISCORD_WEBHOOK|SLACK_WEBHOOK|TEAMS_WEBHOOK|MATRIX_WEBHOOK|MATRIX_HOMESERVER|MATRIX_USERNAME|MATRIX_PASSWORD|MATRIX_ACCESS_TOKEN|MATRIX_ROOM_ID|NTFY_URL|NTFY_TOPIC|NTFY_TOKEN|NTFY_PRIORITY|GOTIFY_URL|GOTIFY_TOKEN|GOTIFY_PRIORITY|GENERIC_WEBHOOK_URL)$'
         SECRET_MODE="local"
     fi
 

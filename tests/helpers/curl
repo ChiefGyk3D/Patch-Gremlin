@@ -6,16 +6,32 @@ out="$STUB_CAPTURE_DIR/call-$n"
 payload=""
 url=""
 prev=""
+cfg=""
 for a in "$@"; do
   case "$prev" in
     -d) payload="$a" ;;
+    -K) cfg="$a" ;;
   esac
   case "$a" in
     http*) url="$a" ;;
   esac
   prev="$a"
 done
-{ echo "URL=$url"; echo "ARGS=$*"; } > "$out"
+# A -K config file carries the URL and secret headers (never argv).
+if [[ -n "$cfg" && -r "$cfg" ]]; then
+  cfgurl="$(sed -n 's/^url *= *"\(.*\)"$/\1/p' "$cfg" | head -n1)"
+  [[ -n "$cfgurl" ]] && url="$cfgurl"
+fi
+{
+  echo "URL=$url"
+  echo "ARGS=$*"
+  echo "CMDLINE=$(tr '\0' ' ' < /proc/$$/cmdline 2>/dev/null)"
+  if [[ -n "$cfg" && -r "$cfg" ]]; then
+    echo "CFGMODE=$(stat -c '%a' "$cfg")"
+    # Header lines, unquoted, so tests can grep them as before.
+    sed -n 's/^header *= *"\(.*\)"$/\1/p' "$cfg"
+  fi
+} > "$out"
 # payload may be @file
 if [[ "$payload" == @* ]]; then
   cp "${payload#@}" "$STUB_CAPTURE_DIR/payload-$n" 2>/dev/null || true

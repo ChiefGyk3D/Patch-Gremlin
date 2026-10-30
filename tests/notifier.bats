@@ -301,7 +301,7 @@ NTFY_TOPIC="servers"'
     assert_payloads_valid_json
 }
 
-@test "gotify: appends the token to the URL and sends valid JSON" {
+@test "gotify: sends the token in a header, not the URL, and valid JSON" {
     write_secrets '
 GOTIFY_URL="https://gotify.example.com/message"
 GOTIFY_TOKEN="AtokenX"'
@@ -309,7 +309,9 @@ GOTIFY_TOKEN="AtokenX"'
                  PATCH_GREMLIN_OS_TYPE=debian
     [ "$status" -eq 0 ]
     assert_payloads_valid_json
-    grep -q 'token=AtokenX' "$STUB_CAPTURE_DIR/call-1"
+    grep -qi 'X-Gotify-Key: AtokenX' "$STUB_CAPTURE_DIR/call-1"
+    grep -E '^(URL|ARGS|CMDLINE)=' "$STUB_CAPTURE_DIR/call-1" > "$SANDBOX/argv"
+    refute grep -q 'AtokenX' "$SANDBOX/argv"
 }
 
 @test "generic webhook: emits machine-readable fields" {

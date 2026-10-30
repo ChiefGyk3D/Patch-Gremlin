@@ -73,6 +73,16 @@ assert_payloads_valid_json() {
     return 0
 }
 
+# Assert a command fails. A bare `! cmd` in the middle of a bats test never
+# fails the test (bash exempts negated commands from errexit), so use this.
+refute() {
+    if "$@"; then
+        echo "expected failure but succeeded: $*" >&2
+        return 1
+    fi
+    return 0
+}
+
 payload_field() {
     python3 -c '
 import json,sys

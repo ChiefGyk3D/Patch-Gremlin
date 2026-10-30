@@ -38,8 +38,30 @@ write_file() {
     local path mode
     path="$(p "$1")"; mode="$2"
     mkdir -p "$(dirname "$path")"
+    # Create the file private (600) before any content is written, then widen
+    # to the requested mode, so there is no window with a looser mode.
+    ( umask 077; : > "$path" )
+    chmod 600 "$path"
     cat > "$path"
     chmod "$mode" "$path"
+}
+
+# Quote a value for secrets.conf: wrap in double quotes, escaping only \ and ".
+# update-notifier.sh parses (never sources) the file and undoes exactly this.
+secret_quote() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '"%s"' "$s"
+}
+
+# Refuse secrets containing control characters (a newline would start a new
+# line in the file).
+reject_control_chars() {
+    local name="$1" value="$2"
+    if [[ "$value" =~ [[:cntrl:]] ]]; then
+        die "$name contains a control character; refusing to write it"
+    fi
 }
 
 run_systemctl() {
@@ -478,30 +500,36 @@ install_secrets() {
     chmod 755 "$(p /etc/update-notifier)"
 
     if [[ "$SECRET_MODE" == "local" ]]; then
-        write_file /etc/update-notifier/secrets.conf 600 <<EOF
-# Patch Gremlin local secrets. Mode 600, root-owned.
-SECRET_MODE="local"
-
-DISCORD_WEBHOOK="${LOCAL_DISCORD_WEBHOOK}"
-SLACK_WEBHOOK="${LOCAL_SLACK_WEBHOOK}"
-TEAMS_WEBHOOK="${LOCAL_TEAMS_WEBHOOK}"
-
-MATRIX_WEBHOOK="${LOCAL_MATRIX_WEBHOOK}"
-MATRIX_HOMESERVER="${LOCAL_MATRIX_HOMESERVER}"
-MATRIX_USERNAME="${LOCAL_MATRIX_USERNAME}"
-MATRIX_PASSWORD="${LOCAL_MATRIX_PASSWORD}"
-MATRIX_ACCESS_TOKEN="${LOCAL_MATRIX_ACCESS_TOKEN}"
-MATRIX_ROOM_ID="${LOCAL_MATRIX_ROOM_ID}"
-
-NTFY_URL="${LOCAL_NTFY_URL}"
-NTFY_TOPIC="${LOCAL_NTFY_TOPIC}"
-NTFY_TOKEN="${LOCAL_NTFY_TOKEN}"
-
-GOTIFY_URL="${LOCAL_GOTIFY_URL}"
-GOTIFY_TOKEN="${LOCAL_GOTIFY_TOKEN}"
-
-GENERIC_WEBHOOK_URL="${LOCAL_WEBHOOK_URL}"
-EOF
+        # The file is PARSED by update-notifier.sh (KEY="VALUE", values taken
+        # literally), never sourced. Values are quoted with only \ and "
+        # escaped; control characters are rejected.
+        local -a pairs=(
+            DISCORD_WEBHOOK:LOCAL_DISCORD_WEBHOOK
+            SLACK_WEBHOOK:LOCAL_SLACK_WEBHOOK
+            TEAMS_WEBHOOK:LOCAL_TEAMS_WEBHOOK
+            MATRIX_WEBHOOK:LOCAL_MATRIX_WEBHOOK
+            MATRIX_HOMESERVER:LOCAL_MATRIX_HOMESERVER
+            MATRIX_USERNAME:LOCAL_MATRIX_USERNAME
+            MATRIX_PASSWORD:LOCAL_MATRIX_PASSWORD
+            MATRIX_ACCESS_TOKEN:LOCAL_MATRIX_ACCESS_TOKEN
+            MATRIX_ROOM_ID:LOCAL_MATRIX_ROOM_ID
+            NTFY_URL:LOCAL_NTFY_URL
+            NTFY_TOPIC:LOCAL_NTFY_TOPIC
+            NTFY_TOKEN:LOCAL_NTFY_TOKEN
+            GOTIFY_URL:LOCAL_GOTIFY_URL
+            GOTIFY_TOKEN:LOCAL_GOTIFY_TOKEN
+            GENERIC_WEBHOOK_URL:LOCAL_WEBHOOK_URL
+        )
+        local pair out src val
+        out="# Patch Gremlin local secrets. Mode 600, root-owned."$'\n'
+        out+='SECRET_MODE="local"'$'\n'
+        for pair in "${pairs[@]}"; do
+            src="${pair#*:}"
+            val="${!src}"
+            reject_control_chars "$src" "$val"
+            out+="${pair%%:*}=$(secret_quote "$val")"$'\n'
+        done
+        printf '%s' "$out" | write_file /etc/update-notifier/secrets.conf 600
         ok "Wrote /etc/update-notifier/secrets.conf (mode 600)"
         # Nothing sensitive in the unit file itself.
         write_file /etc/update-notifier/env 600 <<EOF
@@ -512,6 +540,14 @@ EOF
         # /etc/apt/apt.conf.d/99patch-gremlin-notification, both mode 644 -
         # any local user could read it, and `systemctl show` exposed it too.
         # It now lives in one root-only EnvironmentFile.
+        local v
+        for v in DOPPLER_TOKEN DOPPLER_DISCORD_SECRET DOPPLER_TEAMS_SECRET DOPPLER_SLACK_SECRET \
+                 DOPPLER_MATRIX_SECRET DOPPLER_MATRIX_HOMESERVER_SECRET DOPPLER_MATRIX_USERNAME_SECRET \
+                 DOPPLER_MATRIX_PASSWORD_SECRET DOPPLER_MATRIX_ROOM_ID_SECRET DOPPLER_MATRIX_TOKEN_SECRET \
+                 DOPPLER_NTFY_URL_SECRET DOPPLER_NTFY_TOPIC_SECRET DOPPLER_NTFY_TOKEN_SECRET \
+                 DOPPLER_GOTIFY_URL_SECRET DOPPLER_GOTIFY_TOKEN_SECRET DOPPLER_WEBHOOK_SECRET; do
+            reject_control_chars "$v" "${!v:-}"
+        done
         write_file /etc/update-notifier/env 600 <<EOF
 SECRET_MODE=doppler
 DOPPLER_TOKEN=${DOPPLER_TOKEN}
