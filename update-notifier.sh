@@ -793,6 +793,7 @@ unquote_value() {
             c="${v:i:1}"
             if [[ "$c" == "\\" && $((i + 1)) -lt ${#v} ]]; then
                 next="${v:i+1:1}"
+                # shellcheck disable=SC1003 # '\' below is a literal-backslash case pattern, not an escaped quote
                 case "$next" in
                     '\'|'"'|'$'|'`') out+="$next"; i=$((i + 1)); continue ;;
                 esac
