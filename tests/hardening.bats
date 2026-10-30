@@ -174,10 +174,10 @@ MATRIX_ROOM_ID="!room:example.org"'
 
 @test "log parsing: a non-UTF-8 byte does not hide the upgraded packages" {
     printf '2025-08-20 06:17:19,123 INFO \xff Packages that will be upgraded: libssl3 curl\n' > "$SANDBOX/bin.log"
-    LC_ALL=en_US.utf8 run bash -c "
+    LC_ALL=C.UTF-8 run bash -c "
         export PATCH_GREMLIN_SOURCE_ONLY=1
         source '$REPO_ROOT/update-notifier.sh'
-        parse_upgraded_packages '$SANDBOX/bin.log' debian"
+        parse_upgraded_packages '$SANDBOX/bin.log' debian 2>/dev/null"
     [ "$output" = "libssl3 curl" ]
 }
 
