@@ -8,7 +8,7 @@
 
 set -uo pipefail
 
-PATCH_GREMLIN_VERSION="2.0.0"
+PATCH_GREMLIN_VERSION="2.0.1"
 
 NOTIFIER="${PATCH_GREMLIN_NOTIFIER:-/usr/local/bin/update-notifier.sh}"
 SERVICE_DIR="${PATCH_GREMLIN_SERVICE_DIR:-/etc/systemd/system}"
