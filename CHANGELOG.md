@@ -5,6 +5,19 @@ All notable changes to Patch Gremlin are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security hardening
+
+- Harden secret handling: the notifier parses `config.sh` and `secrets.conf`
+  instead of sourcing them, the installer quotes values safely and rejects
+  control characters, files are created private from the first byte, and
+  webhook URLs and tokens no longer appear on the `curl` command line (Gotify
+  now uses the `X-Gotify-Key` header).
+- Matrix homeservers must be `https://`.
+- Log parsing tolerates non-UTF-8 bytes; the uninstaller removes only its own
+  timer drop-ins.
+
 ## [2.0.0] - 2026-08-21
 
 A correctness and security release. Several long-standing bugs meant the

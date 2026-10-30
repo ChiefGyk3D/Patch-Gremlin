@@ -120,7 +120,8 @@ Look for: `pkgs that look like they should be upgraded:`
 
 **Cause**: Environment variables don't transfer over SSH
 
-**Solution**: The script now auto-loads from `/etc/update-notifier/config.sh`. Ensure it exists:
+**Solution**: The script now auto-reads `/etc/update-notifier/config.sh` (parsed as `KEY=VALUE`
+lines, not executed as a script). Ensure it exists:
 
 ```bash
 sudo cp ~/src/scripts/config.sh /etc/update-notifier/config.sh

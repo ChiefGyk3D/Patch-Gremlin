@@ -49,10 +49,15 @@ a pattern the shipped `config.example.sh` recommended.
 - Secrets live in `/etc/update-notifier/env` or
   `/etc/update-notifier/secrets.conf`, both mode 600 and root-owned, loaded
   via systemd `EnvironmentFile=`.
-- The notifier refuses to source a config or secrets file that is
+- The notifier refuses to read a config or secrets file that is
   group/world-writable or not owned by root.
-- `config.sh` is parsed against an allowlist and never evaluated; values
-  containing shell metacharacters are rejected.
+- `config.sh` and `secrets.conf` are parsed as allowlisted `KEY=VALUE` lines
+  and never sourced or evaluated; values are taken literally (one layer of
+  surrounding quotes is removed, nothing is expanded). The installer rejects
+  control characters in secrets and writes files private (mode 600) from the
+  first byte.
+- Webhook URLs and tokens are passed to `curl` through a mode-600 config file
+  (`-K`) that is deleted on exit, never on the command line.
 - Log content is JSON-escaped through a single code path before being placed
   in any payload.
 - Errors are logged with token-shaped strings redacted.
