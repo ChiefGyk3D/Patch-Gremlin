@@ -6,9 +6,11 @@
 #
 # SECURITY NOTE
 # -------------
-# This file is PARSED, not executed. Only `KEY=VALUE` lines whose key appears
-# in the installer's allowlist are read, and values containing shell
-# metacharacters ($ ` ; & | < > ( )) are rejected rather than evaluated.
+# This file is PARSED, not executed or sourced, by both the installer and the
+# notifier. Only `KEY=VALUE` lines whose key appears in the allowlist are
+# read. The installer rejects values containing shell metacharacters
+# ($ ` ; & | < > ( )); the notifier takes values literally and never
+# evaluates them.
 #
 # That means command substitution does NOT work here. A previous version of
 # this template suggested `export DOPPLER_DISCORD_SECRET="$(hostname)_..."`,

@@ -257,6 +257,8 @@ MATRIX_ROOM_ID="!room:matrix.org"
 ```
 
 **Security**: This file is automatically created with `chmod 600` (owner read/write only).
+It is parsed as plain `KEY="VALUE"` lines, never executed as a shell script: `$`,
+backticks and quotes in a value are kept literally.
 
 ## Getting Webhook URLs
 
