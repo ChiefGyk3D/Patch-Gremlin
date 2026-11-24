@@ -69,6 +69,34 @@ EOS
     grep -rqF 'ntfy.example.com' "$STUB_CAPTURE_DIR"
 }
 
+@test "secrets: environment values override values from the secrets file" {
+    write_secrets 'DISCORD_WEBHOOK="https://discord.com/api/webhooks/1/from-file"'
+    run_notifier DISCORD_WEBHOOK="https://discord.com/api/webhooks/1/from-environment"
+    [ "$status" -eq 0 ]
+    grep -rqF 'from-environment' "$STUB_CAPTURE_DIR"
+    refute grep -rqF 'from-file' "$STUB_CAPTURE_DIR"
+}
+
+@test "secrets: group-readable files are refused by default" {
+    write_secrets 'DISCORD_WEBHOOK="https://discord.com/api/webhooks/1/abc"'
+    chmod 640 "$PATCH_GREMLIN_SECRETS_FILE"
+    run_notifier SECRET_MODE=local
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"permissions"* ]]
+    [ -z "$(ls -A "$STUB_CAPTURE_DIR")" ]
+}
+
+@test "webhooks: plain HTTP is refused unless explicitly allowed" {
+    write_secrets 'GENERIC_WEBHOOK_URL="http://192.0.2.10/hook"'
+    run_notifier
+    [ "$status" -ne 0 ]
+    [ -z "$(ls -A "$STUB_CAPTURE_DIR")" ]
+
+    run_notifier PATCH_GREMLIN_ALLOW_INSECURE_HTTP=true
+    [ "$status" -eq 0 ]
+    grep -rqF 'http://192.0.2.10/hook' "$STUB_CAPTURE_DIR"
+}
+
 @test "secrets: installer output round-trips hostile values exactly" {
     local nasty='a"b$(touch '"$SANDBOX"'/pwn7)`id`\c$HOME'"'"'q'
     local root="$SANDBOX/root"
@@ -156,6 +184,22 @@ GOTIFY_TOKEN="AtokenX"'
     [ "$status" -eq 0 ]
     grep -q '^CFGMODE=600$' "$STUB_CAPTURE_DIR/call-1"
     [ -z "$(ls -A "$tdir")" ]
+}
+
+@test "curl: HTTPS requests require HTTPS protocol and TLS 1.2 or newer" {
+    write_secrets 'DISCORD_WEBHOOK="https://discord.com/api/webhooks/1/abc"'
+    run_notifier
+    [ "$status" -eq 0 ]
+    grep -q -- "--proto =https" "$STUB_CAPTURE_DIR/call-1"
+    grep -q -- "--tlsv1.2" "$STUB_CAPTURE_DIR/call-1"
+}
+
+@test "logging: journal-connected runs still use the patch-gremlin tag" {
+    run env PATH="$HELPERS:$PATH" STUB_LOGGER_FILE="$SANDBOX/logger" \
+        JOURNAL_STREAM=8:8 PATCH_GREMLIN_SOURCE_ONLY=1 bash -c \
+        "source '$REPO_ROOT/update-notifier.sh'; log test-message"
+    [ "$status" -eq 0 ]
+    grep -q -- '-t patch-gremlin test-message' "$SANDBOX/logger"
 }
 
 # --------------------------------------------------------------------------

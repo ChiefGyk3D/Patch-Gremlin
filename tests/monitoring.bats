@@ -78,17 +78,28 @@ EOF
     [[ "$output" == *"WARNING"* ]]
 }
 
-@test "health-check: a failing notifier dry-run is CRITICAL" {
+@test "health-check: never executes the notifier" {
     install_fake_install
     cat > "$SANDBOX/bin/notifier" <<'EOF'
 #!/bin/bash
-echo "boom" >&2
-exit 1
+touch "${PATCH_GREMLIN_STATE_DIR}/notifier-ran"
+exit 0
 EOF
     chmod +x "$SANDBOX/bin/notifier"
     hc "$SANDBOX/bin/notifier"
-    [ "$status" -eq 2 ]
-    [[ "$output" == *"CRITICAL"* ]]
+    [ "$status" -eq 0 ]
+    [ ! -e "$PATCH_GREMLIN_STATE_DIR/notifier-ran" ]
+}
+
+@test "health-check: hostile state is never evaluated" {
+    install_fake_install 0
+    mkdir -p "$PATCH_GREMLIN_STATE_DIR"
+    cat > "$PATCH_GREMLIN_STATE_DIR/state" <<EOF
+last_run_epoch=\$(touch $SANDBOX/pwned-health)
+last_status=no-updates
+EOF
+    hc "$SANDBOX/bin/notifier"
+    [ ! -e "$SANDBOX/pwned-health" ]
 }
 
 @test "health-check: --help works" {
@@ -153,6 +164,18 @@ EOF
     [[ "$output" == OK* ]]
 }
 
+@test "nagios: hostile state is never evaluated" {
+    fake_health 0
+    mkdir -p "$PATCH_GREMLIN_STATE_DIR"
+    cat > "$PATCH_GREMLIN_STATE_DIR/state" <<EOF
+last_run_epoch=\$(touch $SANDBOX/pwned-nagios)
+last_status=no-updates
+EOF
+    nagios
+    [ ! -e "$SANDBOX/pwned-nagios" ]
+    [ "$status" -eq 1 ]
+}
+
 @test "nagios: warns when the last run is too old" {
     fake_health 0
     mkdir -p "$PATCH_GREMLIN_STATE_DIR"
@@ -212,4 +235,23 @@ EOF
         [[ -z "$line" || "$line" == \#* ]] && continue
         [[ "$line" =~ ^[a-z_]+(\{[^}]*\})?\ -?[0-9]+(\.[0-9]+)?$ ]] || return 1
     done <<< "$output"
+}
+
+@test "prometheus: hostile state is never evaluated" {
+    fake_health 0
+    mkdir -p "$PATCH_GREMLIN_STATE_DIR"
+    cat > "$PATCH_GREMLIN_STATE_DIR/state" <<EOF
+last_run_epoch=\$(touch $SANDBOX/pwned-prometheus)
+last_status=\$(touch $SANDBOX/pwned-status)
+pending_total=not-a-number
+EOF
+    run env PATH="$FAKEBIN:$HELPERS:$PATH" \
+        PATCH_GREMLIN_HEALTH_SCRIPT="$SANDBOX/bin/health" \
+        PATCH_GREMLIN_STATE_DIR="$PATCH_GREMLIN_STATE_DIR" \
+        bash "$REPO_ROOT/monitoring/prometheus-exporter.sh"
+    [ "$status" -eq 0 ]
+    [ ! -e "$SANDBOX/pwned-prometheus" ]
+    [ ! -e "$SANDBOX/pwned-status" ]
+    [[ "$output" == *"patch_gremlin_last_run_timestamp_seconds 0"* ]]
+    [[ "$output" == *'patch_gremlin_status_info{status="unknown"} 1'* ]]
 }

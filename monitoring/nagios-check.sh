@@ -35,8 +35,30 @@ fi
 
 last_run_epoch=0
 last_status="unknown"
-# shellcheck source=/dev/null
-source "$STATE_DIR/state" 2>/dev/null || true
+pending_total=0
+pending_security=0
+read_state() {
+    local file="$1" mode owner expected_owner line key value
+    [[ -r "$file" && ! -L "$file" ]] || return 1
+    mode="$(stat -c '%a' "$file" 2>/dev/null)" || return 1
+    owner="$(stat -c '%u' "$file" 2>/dev/null)" || return 1
+    expected_owner=0; [[ $(id -u) -eq 0 ]] || expected_owner="$(id -u)"
+    (( (8#$mode & 022) == 0 )) || return 1
+    [[ "$owner" == "$expected_owner" ]] || return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" == *=* ]] || continue
+        key="${line%%=*}"; value="${line#*=}"
+        case "$key" in
+            last_run_epoch|pending_total|pending_security)
+                [[ "$value" =~ ^[0-9]+$ ]] && printf -v "$key" '%s' "$value" ;;
+            last_status) [[ "$value" =~ ^(updated|updates-available|no-updates|error)$ ]] && last_status="$value" ;;
+        esac
+    done < "$file"
+}
+if ! read_state "$STATE_DIR/state"; then
+    echo "WARNING - State file failed safety validation"
+    exit 1
+fi
 
 if [[ "${last_run_epoch:-0}" -le 0 ]]; then
     echo "WARNING - State file has no recorded run"

@@ -159,6 +159,15 @@ ExecStart=/bin/evil' \
     [ -f "$ROOTDIR/etc/apt/apt.conf.d/50unattended-upgrades" ]
 }
 
+@test "setup: unset AUTO_REBOOT is false in non-interactive mode" {
+    install_debian UPDATE_TYPE=security UPDATE_SCHEDULE=daily UPDATE_TIME=02:00 \
+        SECRET_MODE=local VERBOSE_LOGGING=false \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc
+    [ "$status" -eq 0 ]
+    grep -q 'Automatic-Reboot "false"' "$ROOTDIR/etc/apt/apt.conf.d/50unattended-upgrades"
+    refute grep -q 'Automatic-Reboot "true"' "$ROOTDIR/etc/apt/apt.conf.d/50unattended-upgrades"
+}
+
 # --------------------------------------------------------------------------
 # Security
 # --------------------------------------------------------------------------
@@ -269,7 +278,7 @@ EOF
 @test "setup: notification hangs off the upgrade unit, not a racing timer" {
     default_install
     [ "$status" -eq 0 ]
-    grep -q 'ExecStartPost=-/usr/local/bin/update-notifier.sh' \
+    grep -q 'ExecStartPost=-/usr/bin/systemctl start --no-block update-notifier.service' \
         "$ROOTDIR/etc/systemd/system/apt-daily-upgrade.service.d/patch-gremlin.conf"
 }
 

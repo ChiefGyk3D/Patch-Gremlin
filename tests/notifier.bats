@@ -65,6 +65,31 @@ teardown() { teardown_sandbox; }
     [[ "$output" != *"oldpkg"* ]]
 }
 
+@test "parse_upgraded_packages: old upgrade followed by no-packages run is empty" {
+    load_notifier
+    run parse_upgraded_packages "$FIXTURES/uu-old-upgrade-no-updates.log" debian
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [[ "$output" != *"oldpkg"* ]]
+}
+
+@test "log parsers: kept-back packages and errors come only from the most recent run" {
+    cat > "$SANDBOX/runs.log" <<'EOF'
+2025-08-20 06:00:00,000 INFO Starting unattended upgrades script
+2025-08-20 06:00:01,000 ERROR old failure
+2025-08-20 06:00:02,000 WARNING Package oldpkg kept back: oldpkg
+2025-08-21 06:00:00,000 INFO Starting unattended upgrades script
+2025-08-21 06:00:01,000 INFO No packages found that can be upgraded unattended and no pending auto-removals
+EOF
+    load_notifier
+    run parse_last_error "$SANDBOX/runs.log" debian
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run parse_kept_back "$SANDBOX/runs.log" debian
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
 @test "parse_upgraded_packages: empty when nothing upgraded" {
     load_notifier
     run parse_upgraded_packages "$FIXTURES/uu-no-updates.log" debian
@@ -240,6 +265,7 @@ MATRIX_ROOM_ID="!room:example.org"'
                  PATCH_GREMLIN_OS_TYPE=debian PATCH_GREMLIN_DRY_RUN=true
     [ "$status" -eq 0 ]
     [ ! -e "$STUB_CAPTURE_DIR/payload-1" ]
+    [ ! -e "$PATCH_GREMLIN_STATE_DIR/state" ]
 }
 
 # --------------------------------------------------------------------------

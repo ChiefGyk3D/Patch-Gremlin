@@ -19,10 +19,26 @@ pending_total=0
 pending_security=0
 notification_sent=false
 
-if [[ -r "$STATE_DIR/state" ]]; then
-    # shellcheck source=/dev/null
-    source "$STATE_DIR/state" 2>/dev/null || true
-fi
+read_state() {
+    local file="$1" mode owner expected_owner line key value
+    [[ -r "$file" && ! -L "$file" ]] || return 1
+    mode="$(stat -c '%a' "$file" 2>/dev/null)" || return 1
+    owner="$(stat -c '%u' "$file" 2>/dev/null)" || return 1
+    expected_owner=0; [[ $(id -u) -eq 0 ]] || expected_owner="$(id -u)"
+    (( (8#$mode & 022) == 0 )) || return 1
+    [[ "$owner" == "$expected_owner" ]] || return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" == *=* ]] || continue
+        key="${line%%=*}"; value="${line#*=}"
+        case "$key" in
+            last_run_epoch|upgraded_count|pending_total|pending_security)
+                [[ "$value" =~ ^[0-9]+$ ]] && printf -v "$key" '%s' "$value" ;;
+            last_status) [[ "$value" =~ ^(updated|updates-available|no-updates|error)$ ]] && last_status="$value" ;;
+            notification_sent) [[ "$value" =~ ^(true|false)$ ]] && notification_sent="$value" ;;
+        esac
+    done < "$file"
+}
+[[ ! -r "$STATE_DIR/state" ]] || read_state "$STATE_DIR/state" || true
 
 num() { local v="${1:-0}"; v="${v//[^0-9]/}"; printf '%s' "${v:-0}"; }
 

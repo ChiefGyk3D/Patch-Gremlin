@@ -1,2 +1,5 @@
 #!/bin/bash
+if [[ -n "${STUB_LOGGER_FILE:-}" ]]; then
+  printf '%s\n' "$*" >> "$STUB_LOGGER_FILE"
+fi
 exit 0

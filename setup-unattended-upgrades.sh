@@ -92,7 +92,7 @@ Configuration environment variables (all optional in interactive mode):
   UPDATE_TIME=HH:MM                  24-hour local time (default: 02:00)
   SYSTEM_TIMEZONE=Area/City          Set the system timezone
   VERBOSE_LOGGING=true|false         unattended-upgrades debug output
-  AUTO_REBOOT=true|false             Reboot when a update requires it
+  AUTO_REBOOT=true|false             Reboot when an update requires it (default: false)
   REBOOT_WITH_USERS=true|false       Reboot even with users logged in
                                      (default: false)
   ENABLE_HEARTBEAT=true|false        Also send a scheduled report even when
@@ -600,6 +600,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/update-notifier/env
+EnvironmentFile=-/etc/update-notifier/secrets.conf
 ExecStart=/usr/local/bin/update-notifier.sh
 User=root
 TimeoutStartSec=300
@@ -636,11 +637,8 @@ EOF
 
     write_file "/etc/systemd/system/${upgrade_unit}.d/patch-gremlin.conf" 644 <<EOF
 # Managed by Patch Gremlin - notify once the upgrade run has finished.
-# No EnvironmentFile here on purpose: that would put the Doppler token into
-# the environment of the upgrade process itself. The notifier reads
-# /etc/update-notifier/env (mode 600) on its own.
 [Service]
-ExecStartPost=-/usr/local/bin/update-notifier.sh
+ExecStartPost=-/usr/bin/systemctl start --no-block update-notifier.service
 EOF
     ok "Hooked notifications onto ${upgrade_unit}"
 
@@ -724,7 +722,7 @@ gather_settings() {
     UPDATE_TIME="${UPDATE_TIME:-02:00}"
     SYSTEM_TIMEZONE="${SYSTEM_TIMEZONE:-}"
     VERBOSE_LOGGING="${VERBOSE_LOGGING:-}"
-    AUTO_REBOOT="${AUTO_REBOOT:-}"
+    AUTO_REBOOT="${AUTO_REBOOT:-false}"
     REBOOT_WITH_USERS="${REBOOT_WITH_USERS:-false}"
     ENABLE_HEARTBEAT="${ENABLE_HEARTBEAT:-false}"
     SECRET_MODE="${SECRET_MODE:-}"
@@ -754,8 +752,8 @@ gather_settings() {
         [[ "$REPLY_VERBOSE" =~ ^[Yy] ]] && VERBOSE_LOGGING="true" || VERBOSE_LOGGING="false"
     fi
     if [[ -z "$AUTO_REBOOT" ]]; then
-        prompt REPLY_REBOOT "Reboot automatically when an update requires it? (Y/n): " "y"
-        [[ "$REPLY_REBOOT" =~ ^[Nn] ]] && AUTO_REBOOT="false" || AUTO_REBOOT="true"
+        prompt REPLY_REBOOT "Reboot automatically when an update requires it? (y/N): " "n"
+        [[ "$REPLY_REBOOT" =~ ^[Yy] ]] && AUTO_REBOOT="true" || AUTO_REBOOT="false"
         if [[ "$AUTO_REBOOT" == "true" ]]; then
             # Previously hardcoded to "true", so a box could reboot out from
             # under logged-in users without the operator ever being asked.

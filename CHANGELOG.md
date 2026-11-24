@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Harden state file handling, parser correctness, reboot default and secret
+  loading.
+
 ## [2.0.1] - 2026-10-30
 
 ### Security hardening

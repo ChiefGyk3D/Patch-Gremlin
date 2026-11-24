@@ -109,24 +109,32 @@ elif [[ -f "$CONFIG_DIR/env" ]]; then
     fi
 fi
 
-# Dry-run the notifier. Check the command directly rather than via $? - under
-# `set -e` an assignment from a failing command exits before $? is read.
-if [[ -x "$NOTIFIER" ]]; then
-    log "Testing notification script (dry run)..."
-    if test_output="$(PATCH_GREMLIN_DRY_RUN=true "$NOTIFIER" 2>&1)"; then
-        log "✓ Notification script test passed"
-    else
-        log "✗ Notification script test failed: $(printf '%s' "$test_output" | head -1)"
-        add_error
-    fi
-fi
-
 # Freshness of the last run, from the state file the notifier writes.
 STATE_DIR="${PATCH_GREMLIN_STATE_DIR:-/var/lib/patch-gremlin}"
+read_state() {
+    local file="$1" mode owner expected_owner line key value
+    [[ -r "$file" && ! -L "$file" ]] || return 1
+    mode="$(stat -c '%a' "$file" 2>/dev/null)" || return 1
+    owner="$(stat -c '%u' "$file" 2>/dev/null)" || return 1
+    expected_owner=0; [[ $(id -u) -eq 0 ]] || expected_owner="$(id -u)"
+    (( (8#$mode & 022) == 0 )) || return 1
+    [[ "$owner" == "$expected_owner" ]] || return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" == *=* ]] || continue
+        key="${line%%=*}"; value="${line#*=}"
+        case "$key" in
+            last_run_epoch) [[ "$value" =~ ^[0-9]+$ ]] && last_run_epoch="$value" ;;
+            last_status) [[ "$value" =~ ^(updated|updates-available|no-updates|error)$ ]] && last_status="$value" ;;
+        esac
+    done < "$file"
+}
 if [[ -r "$STATE_DIR/state" ]]; then
     last_run_epoch=0
-    # shellcheck source=/dev/null
-    source "$STATE_DIR/state" 2>/dev/null || true
+    last_status=unknown
+    if ! read_state "$STATE_DIR/state"; then
+        log "⚠ State file failed safety validation"
+        add_warning
+    fi
     if [[ "${last_run_epoch:-0}" -gt 0 ]]; then
         age_hours=$(( ( $(date +%s) - last_run_epoch ) / 3600 ))
         if [[ $age_hours -gt ${PATCH_GREMLIN_MAX_AGE_HOURS:-49} ]]; then
