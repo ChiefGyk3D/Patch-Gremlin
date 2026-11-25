@@ -108,6 +108,23 @@ The service token allows the notification script to access your secrets without 
 
 ## Configuration
 
+### Optional backends
+
+All new backends are off by default and require explicit opt-in:
+
+- [Health-check ping](docs/health-check-backend.md) provides independent
+  start, success, and failure dead-man pings.
+- [Pushover](docs/pushover-backend.md) provides break-glass delivery for run
+  errors only.
+- [Prometheus textfile output](docs/prometheus-backend.md) is produced by a
+  separate timer and never invokes the notifier.
+- [SIEM JSONL events](docs/siem-events-backend.md) provide a stable schema,
+  capped rotation, and matching syslog fields.
+
+The Prometheus output intentionally exports both
+`patch_gremlin_reboot_required` and `node_reboot_required` for compatibility
+with the repository's alert draft.
+
 ### Interactive Setup
 
 The setup script (`setup-unattended-upgrades.sh`) will interactively ask you about:
@@ -174,6 +191,11 @@ sudo -E env \
 | `AUTO_REBOOT` | `true`, `false` | `false` |
 | `REBOOT_WITH_USERS` | `true`, `false` | `false` |
 | `ENABLE_HEARTBEAT` | `true`, `false` | `false` |
+| `ENABLE_PROMETHEUS` | `true`, `false` | `false` |
+| `PROMETHEUS_TEXTFILE_DIR` | absolute path | `/var/lib/node_exporter/textfile_collector` |
+| `ENABLE_EVENTS` | `true`, `false` | `false` |
+| `EVENTS_FILE` | absolute path | `/var/log/patch-gremlin/events.jsonl` |
+| `EVENTS_MAX_BYTES` | positive integer | `1048576` |
 | `SECRET_MODE` | `doppler`, `local` | prompt |
 | `DOPPLER_TOKEN` | `dp.st.…` | required for Doppler |
 

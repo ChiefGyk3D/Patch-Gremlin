@@ -50,3 +50,15 @@ export DOPPLER_GOTIFY_TOKEN_SECRET="UPDATE_NOTIFIER_GOTIFY_TOKEN"
 
 # --- Generic JSON webhook -------------------------------------------------
 export DOPPLER_WEBHOOK_SECRET="UPDATE_NOTIFIER_WEBHOOK_URL"
+
+# --- Health-check and break-glass secret names ----------------------------
+export DOPPLER_HEALTHCHECK_SECRET="UPDATE_NOTIFIER_HEALTHCHECK_PING_URL"
+export DOPPLER_PUSHOVER_TOKEN_SECRET="UPDATE_NOTIFIER_PUSHOVER_TOKEN"
+export DOPPLER_PUSHOVER_USER_SECRET="UPDATE_NOTIFIER_PUSHOVER_USER"
+
+# --- Non-secret output settings (all disabled by default) -----------------
+export ENABLE_PROMETHEUS="false"
+export PROMETHEUS_TEXTFILE_DIR="/var/lib/node_exporter/textfile_collector"
+export ENABLE_EVENTS="false"
+export EVENTS_FILE="/var/log/patch-gremlin/events.jsonl"
+export EVENTS_MAX_BYTES="1048576"
