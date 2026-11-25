@@ -1,0 +1,5 @@
+2025-08-20 06:17:15,236 INFO Starting unattended upgrades script
+2025-08-20 06:17:18,123 INFO Packages that will be upgraded: oldpkg1 oldpkg2
+2025-08-20 06:18:02,456 INFO All upgrades installed
+2025-08-21 06:17:15,236 INFO Starting unattended upgrades script
+2025-08-21 06:17:18,123 INFO No packages found that can be upgraded unattended and no pending auto-removals

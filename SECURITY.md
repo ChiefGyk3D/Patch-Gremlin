@@ -46,9 +46,11 @@ a pattern the shipped `config.example.sh` recommended.
 
 ## How secrets are handled in 2.x
 
-- Secrets live in `/etc/update-notifier/env` or
-  `/etc/update-notifier/secrets.conf`, both mode 600 and root-owned, loaded
-  via systemd `EnvironmentFile=`.
+- Secrets live in `/etc/update-notifier/env`,
+  `/etc/update-notifier/secrets.conf`, or the process environment. Environment
+  values take precedence over file values. Secret files must be mode 600 and
+  root-owned. Group- or world-readable files are refused unless the operator
+  explicitly sets `PATCH_GREMLIN_ALLOW_INSECURE_SECRET_FILE=true`.
 - The notifier refuses to read a config or secrets file that is
   group/world-writable or not owned by root.
 - `config.sh` and `secrets.conf` are parsed as allowlisted `KEY=VALUE` lines
@@ -58,6 +60,11 @@ a pattern the shipped `config.example.sh` recommended.
   first byte.
 - Webhook URLs and tokens are passed to `curl` through a mode-600 config file
   (`-K`) that is deleted on exit, never on the command line.
+- Webhook URLs must use HTTPS. Cleartext HTTP requires the explicit
+  `PATCH_GREMLIN_ALLOW_INSECURE_HTTP=true` override.
+- Monitoring state files are parsed through a key and value allowlist. They
+  are never sourced or evaluated, and unsafe ownership, permissions, and
+  symlinks are refused.
 - Log content is JSON-escaped through a single code path before being placed
   in any payload.
 - Errors are logged with token-shaped strings redacted.

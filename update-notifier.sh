@@ -17,6 +17,8 @@ RETRY_COUNT="${PATCH_GREMLIN_RETRY_COUNT:-3}"
 RETRY_DELAY="${PATCH_GREMLIN_RETRY_DELAY:-2}"
 CURL_TIMEOUT="${PATCH_GREMLIN_CURL_TIMEOUT:-30}"
 DRY_RUN="${PATCH_GREMLIN_DRY_RUN:-false}"
+ALLOW_INSECURE_HTTP="${PATCH_GREMLIN_ALLOW_INSECURE_HTTP:-false}"
+ALLOW_INSECURE_SECRET_FILE="${PATCH_GREMLIN_ALLOW_INSECURE_SECRET_FILE:-false}"
 MAX_PACKAGE_NAMES="${PATCH_GREMLIN_MAX_PACKAGE_NAMES:-20}"
 # Send even when there is nothing to report? changes|always
 NOTIFY_ON="${PATCH_GREMLIN_NOTIFY_ON:-always}"
@@ -45,12 +47,10 @@ log() {
     # including CI runners and any shell spawned from a service, so
     # diagnostics silently vanished exactly where they were most needed.
     #
-    # JOURNAL_STREAM is the signal systemd documents for "my stderr is already
-    # connected to journald"; when it is set we skip the duplicate syslog
-    # write, and update-notifier.service carries SyslogIdentifier=patch-gremlin
-    # so `journalctl -t patch-gremlin` still finds these lines.
+    # Always send through logger so every trigger path has the patch-gremlin
+    # tag. JOURNAL_STREAM only controls whether stderr needs a timestamp.
+    logger -t "patch-gremlin" "$*" 2>/dev/null || true
     if [[ -z "${JOURNAL_STREAM:-}" ]]; then
-        logger -t "patch-gremlin" "$*" 2>/dev/null || true
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
     else
         echo "$*" >&2
@@ -215,9 +215,9 @@ parse_upgraded_packages() {
     [[ -r "$log_file" ]] || return 0
 
     if [[ "$os_type" == "debian" ]]; then
-        # Last occurrence wins so we describe the most recent run only.
-        local line
-        line="$(grep -a 'Packages that will be upgraded:' "$log_file" 2>/dev/null | tail -n 1 || true)"
+        local block line
+        block="$(awk '/Starting unattended upgrades script/{buf=""} {buf=buf $0 "\n"} END{printf "%s", buf}' "$log_file" 2>/dev/null || true)"
+        line="$(printf '%s' "$block" | grep -a 'Packages that will be upgraded:' | tail -n 1 || true)"
         [[ -n "$line" ]] || return 0
         local names="${line#*Packages that will be upgraded:}"
         # Deliberate word splitting: normalises runs of whitespace into a
@@ -250,15 +250,26 @@ parse_upgraded_packages() {
 
 # Packages held back by unattended-upgrades, if any.
 parse_kept_back() {
-    local log_file="$1"
+    local log_file="$1" os_type="${2:-debian}" block
     [[ -r "$log_file" ]] || return 0
-    grep -a 'kept back' "$log_file" 2>/dev/null | tail -n 1 | sed 's/.*kept back:[[:space:]]*//' || true
+    block="$(latest_log_block "$log_file" "$os_type")"
+    printf '%s' "$block" | grep -a 'kept back' | tail -n 1 | sed 's/.*kept back:[[:space:]]*//' || true
 }
 
 parse_last_error() {
-    local log_file="$1"
+    local log_file="$1" os_type="${2:-debian}" block
     [[ -r "$log_file" ]] || return 0
-    grep -aE '(ERROR|CRITICAL)' "$log_file" 2>/dev/null | tail -n 1 | sed 's/^[0-9:,. -]*\(ERROR\|CRITICAL\)[[:space:]]*//' || true
+    block="$(latest_log_block "$log_file" "$os_type")"
+    printf '%s' "$block" | grep -aE '(ERROR|CRITICAL)' | tail -n 1 | sed 's/^[0-9:,. -]*\(ERROR\|CRITICAL\)[[:space:]]*//' || true
+}
+
+latest_log_block() {
+    local log_file="$1" os_type="$2"
+    if [[ "$os_type" == "debian" ]]; then
+        awk '/Starting unattended upgrades script/{buf=""} {buf=buf $0 "\n"} END{printf "%s", buf}' "$log_file" 2>/dev/null || true
+    else
+        awk '/--- logging initialized ---/{buf=""} {buf=buf $0 "\n"} END{printf "%s", buf}' "$log_file" 2>/dev/null || true
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -331,8 +342,8 @@ build_summary() {
     count_pending_updates "$os_type"
 
     local kept_back error_msg
-    kept_back="$(parse_kept_back "$log_file")"
-    error_msg="$(parse_last_error "$log_file")"
+    kept_back="$(parse_kept_back "$log_file" "$os_type")"
+    error_msg="$(parse_last_error "$log_file" "$os_type")"
 
     # ---- status ----
     if [[ -n "$error_msg" ]]; then
@@ -402,8 +413,12 @@ build_summary() {
 # ---------------------------------------------------------------------------
 validate_webhook() {
     local url="$1" platform="$2"
-    if [[ ! "$url" =~ ^https?:// ]]; then
-        log "WARNING: $platform URL is not http(s), refusing to send"
+    if [[ "$url" =~ ^http:// ]] && [[ "$ALLOW_INSECURE_HTTP" != "true" ]]; then
+        log "WARNING: $platform URL uses insecure HTTP; set PATCH_GREMLIN_ALLOW_INSECURE_HTTP=true to override"
+        return 1
+    fi
+    if [[ ! "$url" =~ ^https:// ]] && [[ ! "$url" =~ ^http:// ]]; then
+        log "WARNING: $platform URL is not an HTTP(S) URL, refusing to send"
         return 1
     fi
     case "$platform" in
@@ -474,7 +489,9 @@ http_post() {
 
     local i response http_code
     for ((i = 1; i <= RETRY_COUNT; i++)); do
-        response="$(curl -sS -w '\n%{http_code}' --max-time "$CURL_TIMEOUT" \
+        local -a tls_args=(--proto '=https' --tlsv1.2)
+        [[ "$url" =~ ^http:// ]] && tls_args=()
+        response="$(curl -sS -w '\n%{http_code}' --max-time "$CURL_TIMEOUT" "${tls_args[@]}" \
             -H 'Content-Type: application/json' \
             -X "$method" -d @"$payload_file" -K "$cfg" 2>/dev/null || printf '\n000')"
         http_code="$(printf '%s' "$response" | tail -n1 | tr -cd '0-9')"
@@ -766,11 +783,15 @@ EOF
 file_is_safe() {
     local f="$1" mode owner
     [[ -r "$f" ]] || return 1
+    if [[ -L "$f" ]]; then
+        log "WARNING: refusing symlinked settings file $f"
+        return 1
+    fi
     mode="$(stat -c '%a' "$f" 2>/dev/null || echo 777)"
     owner="$(stat -c '%u' "$f" 2>/dev/null || echo 65534)"
-    # Reject group- or world-writable files, and files not owned by root.
-    if [[ "${mode: -1}" =~ [2367] ]] || [[ "${mode: -2:1}" =~ [2367] ]]; then
-        log "WARNING: skipping $f - writable by non-owner (mode $mode)"
+    # Secrets and configuration must not be accessible to group or other.
+    if (( (8#$mode & 077) != 0 )) && [[ "$ALLOW_INSECURE_SECRET_FILE" != "true" ]]; then
+        log "WARNING: refusing $f - permissions $mode expose secrets; set PATCH_GREMLIN_ALLOW_INSECURE_SECRET_FILE=true to override"
         return 1
     fi
     if [[ "$owner" != "0" && "$(id -u)" == "0" ]]; then
@@ -836,6 +857,13 @@ parse_kv_file() {
 }
 
 load_secrets() {
+    local -A env_values=()
+    local key
+    for key in SECRET_MODE DISCORD_WEBHOOK TEAMS_WEBHOOK SLACK_WEBHOOK \
+        MATRIX_WEBHOOK MATRIX_HOMESERVER MATRIX_USERNAME MATRIX_PASSWORD MATRIX_ROOM_ID MATRIX_ACCESS_TOKEN \
+        NTFY_URL NTFY_TOPIC NTFY_TOKEN NTFY_PRIORITY GOTIFY_URL GOTIFY_TOKEN GOTIFY_PRIORITY GENERIC_WEBHOOK_URL; do
+        [[ -v "$key" ]] && env_values["$key"]="${!key}"
+    done
     # All notification variables start empty so `set -u` can never fire on them.
     DISCORD_WEBHOOK=""; TEAMS_WEBHOOK=""; SLACK_WEBHOOK=""
     MATRIX_WEBHOOK=""; MATRIX_HOMESERVER=""; MATRIX_USERNAME=""
@@ -868,6 +896,14 @@ load_secrets() {
     if [[ -f "$SECRETS_FILE" ]] && file_is_safe "$SECRETS_FILE"; then
         parse_kv_file "$SECRETS_FILE" \
             '^(SECRET_MODE|DISCORD_WEBHOOK|SLACK_WEBHOOK|TEAMS_WEBHOOK|MATRIX_WEBHOOK|MATRIX_HOMESERVER|MATRIX_USERNAME|MATRIX_PASSWORD|MATRIX_ACCESS_TOKEN|MATRIX_ROOM_ID|NTFY_URL|NTFY_TOPIC|NTFY_TOKEN|NTFY_PRIORITY|GOTIFY_URL|GOTIFY_TOKEN|GOTIFY_PRIORITY|GENERIC_WEBHOOK_URL)$'
+        SECRET_MODE="local"
+    fi
+
+    # Environment values have explicit precedence over parsed files.
+    for key in "${!env_values[@]}"; do
+        printf -v "$key" '%s' "${env_values[$key]}"
+    done
+    if [[ -z "${SECRET_MODE:-}" ]] && [[ -n "$DISCORD_WEBHOOK$TEAMS_WEBHOOK$SLACK_WEBHOOK$MATRIX_WEBHOOK$MATRIX_HOMESERVER$NTFY_URL$GOTIFY_URL$GENERIC_WEBHOOK_URL" ]]; then
         SECRET_MODE="local"
     fi
 
@@ -1023,7 +1059,7 @@ main() {
     if [[ "$NOTIFY_ON" == "changes" && "$UPDATE_STATUS" == "no-updates" ]]; then
         log "INFO: nothing changed and NOTIFY_ON=changes, skipping notification"
         NOTIFICATION_SENT=true
-        write_state
+        [[ "$DRY_RUN" == "true" ]] || write_state
         exit 0
     fi
 
@@ -1061,7 +1097,7 @@ main() {
     [[ "$matrix_mode" == "webhook" ]]  && notify_matrix_webhook "$MATRIX_WEBHOOK"
     [[ "$matrix_mode" == "api" ]]      && notify_matrix_api
 
-    write_state
+    [[ "$DRY_RUN" == "true" ]] || write_state
 
     if [[ "$DRY_RUN" == "true" ]]; then
         log "DRY_RUN: notification simulation complete"

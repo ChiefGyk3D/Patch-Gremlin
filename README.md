@@ -20,7 +20,7 @@ installed.
 - 🔔 **Multi-Platform**: Discord, Microsoft Teams, Slack, Matrix, ntfy, Gotify and generic JSON webhooks — any combination
 - 🔒 **Secrets Done Right**: Doppler or a local file, always mode 600 and root-owned, loaded via systemd `EnvironmentFile=`
 - ⚙️ **Accurate Triggering**: Fires when the upgrade run actually finishes, so the report describes *that* run
-- 🔄 **Auto-Reboot**: Optional, with the reboot window derived from your update time
+- 🔄 **Auto-Reboot**: Opt-in, with the reboot window derived from your update time
 - 🧠 **Intelligent**: Distinguishes "5 packages updated" from "12 still pending (3 security)" from "up to date"
 - 📊 **Monitoring-Ready**: Nagios/Icinga check, Prometheus exporter, and a machine-readable state file
 - 🌍 **Timezone-Aware**: Detects and configures the system timezone during setup
@@ -51,7 +51,7 @@ sudo ./setup-unattended-upgrades.sh
 #    - Choose schedule (daily / weekly)
 #    - Choose timezone
 #    - Choose verbose logging (default: quiet)
-#    - Choose auto-reboot after updates (default: enabled)
+#    - Choose auto-reboot after updates (default: disabled)
 #    - Choose LOCAL file storage
 #    - Enter webhook URLs for your platforms
 
@@ -156,7 +156,7 @@ sudo -E env \
   UPDATE_SCHEDULE=daily \
   UPDATE_TIME=03:30 \
   SYSTEM_TIMEZONE=America/New_York \
-  AUTO_REBOOT=true \
+  AUTO_REBOOT=false \
   REBOOT_WITH_USERS=false \
   SECRET_MODE=local \
   LOCAL_DISCORD_WEBHOOK='https://discord.com/api/webhooks/...' \
@@ -171,7 +171,7 @@ sudo -E env \
 | `UPDATE_TIME` | `HH:MM`, 24-hour | `02:00` |
 | `SYSTEM_TIMEZONE` | e.g. `Europe/Berlin` | unchanged |
 | `VERBOSE_LOGGING` | `true`, `false` | `false` |
-| `AUTO_REBOOT` | `true`, `false` | prompt |
+| `AUTO_REBOOT` | `true`, `false` | `false` |
 | `REBOOT_WITH_USERS` | `true`, `false` | `false` |
 | `ENABLE_HEARTBEAT` | `true`, `false` | `false` |
 | `SECRET_MODE` | `doppler`, `local` | prompt |
@@ -187,9 +187,9 @@ All values are validated **before** anything is written, so a malformed
 
 ### When Notifications Fire
 
-Patch Gremlin hooks onto the upgrade unit itself
-(`ExecStartPost` on `apt-daily-upgrade.service` or `dnf-automatic.service`),
-so the notification always describes the run that just completed.
+Patch Gremlin hooks onto the upgrade unit itself. Its `ExecStartPost` starts
+`update-notifier.service`, so the notification always describes the run that
+just completed and runs with the notifier unit's systemd hardening.
 
 A scheduled "heartbeat" report is also installed but **disabled by default**.
 Enable it with `ENABLE_HEARTBEAT=true` to get a report even on days when no
@@ -339,6 +339,11 @@ cat /var/lib/patch-gremlin/state
 sudo journalctl -t patch-gremlin --since "1 day ago"
 sudo journalctl -f -t patch-gremlin
 ```
+
+Dry runs never create or update the state file. Monitoring reads the last real
+run from that file without executing the notifier. State readers accept only
+known keys and validated values, and reject symlinks, unexpected ownership,
+and group- or world-writable files.
 
 ### Running the Test Suite
 
@@ -496,6 +501,8 @@ PATCH_GREMLIN_MAX_LOG_LINES=100         # Log lines inspected (default: 50)
 PATCH_GREMLIN_RETRY_COUNT=5             # HTTP retries (default: 3)
 PATCH_GREMLIN_RETRY_DELAY=5             # Retry delay seconds (default: 2)
 PATCH_GREMLIN_CURL_TIMEOUT=60           # HTTP timeout seconds (default: 30)
+PATCH_GREMLIN_ALLOW_INSECURE_HTTP=true  # Explicitly permit cleartext test URLs
+PATCH_GREMLIN_ALLOW_INSECURE_SECRET_FILE=true # Explicitly permit broad file modes
 
 # Paths (mainly for testing - see CONTRIBUTING.md)
 PATCH_GREMLIN_LOG_FILE=/path/to.log     # Override upgrade-log discovery
@@ -769,7 +776,9 @@ This will remove:
 - **Local secrets**: File is `chmod 600` (root read/write only)
 - **Doppler secrets**: Service token embedded in systemd Environment directives
 - **No passwords in logs**: All credentials are redacted from log output
-- **HTTPS only**: All webhook calls use secure connections
+- **HTTPS by default**: Webhook calls require HTTPS and curl requires TLS 1.2
+  or newer. For an isolated test endpoint only, set
+  `PATCH_GREMLIN_ALLOW_INSECURE_HTTP=true` explicitly.
 
 ## License
 
