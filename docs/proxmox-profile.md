@@ -50,14 +50,17 @@ On a clustered node, `apt-daily-upgrade.service` acquires
 `/etc/pve/priv/patch-gremlin-upgrade.lock` before it starts. A lock held by
 another node skips that automatic upgrade run. The shared lock records the
 node name and a random invocation ID, and the acquiring node stores the same
-value in a local runtime marker. Cleanup removes the lock only when both values
-match. An incomplete lock with no owner record is eligible for cleanup after
-24 hours. A valid owned lock is never removed as stale because its owner cannot
-be proven inactive without contacting that node. When `/etc/pve/corosync.conf`
-is absent, or the shared `/etc/pve/priv` path is unavailable, the check logs
-the condition and allows the upgrade to continue. This fail-open behavior
-keeps standalone nodes and a node with an unavailable cluster filesystem from
-being permanently blocked.
+value in a local runtime marker. The owning node can release its lock by the
+shared owner record's hostname prefix even if a reboot removed that marker. A
+different node cannot release a live lock. Any lock older than 24 hours is
+stale regardless of whether it has an owner record. This threshold is well
+above the expected duration of an automatic upgrade, while allowing recovery
+after a node crashes or reboots. A stale takeover logs the previous owner and
+the new owner for audit purposes. When `/etc/pve/corosync.conf` is absent, or
+the shared `/etc/pve/priv` path is unavailable, the check logs the condition
+and allows the upgrade to continue. This fail-open behavior keeps standalone
+nodes and a node with an unavailable cluster filesystem from being permanently
+blocked.
 
 INFERRED: `/etc/pve/priv` is root-only cluster configuration storage, and an
 atomic directory creation there acts as cluster-wide exclusion. The behavior

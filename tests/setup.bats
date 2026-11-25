@@ -190,16 +190,51 @@ default_install() {
     export ROOTDIR
 }
 
-@test "setup: proxmox lock release is limited to the acquiring node and invocation" {
+stage_proxmox_lock_helper() {
     run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
         PATCH_GREMLIN_OS_TYPE=debian UPDATE_TYPE=security UPDATE_SCHEDULE=daily \
         UPDATE_TIME=02:30 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=false \
         LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
         bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive --profile proxmox
     [ "$status" -eq 0 ]
+}
+
+@test "setup: proxmox lock is reacquired after its owner crashes and the stale age passes" {
+    stage_proxmox_lock_helper
 
     lock="$ROOTDIR/usr/local/libexec/patch-gremlin-proxmox-lock"
-    cluster_root="$(mktemp -d "$BATS_TEST_TMPDIR/owned-cluster-lock.XXXXXX")"
+    cluster_root="$(mktemp -d "$BATS_TEST_TMPDIR/crashed-cluster-lock.XXXXXX")"
+    first_boot_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-a-first-boot.XXXXXX")"
+    rebooted_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-a-rebooted.XXXXXX")"
+    mkdir -p "$cluster_root/priv"
+    : > "$cluster_root/corosync.conf"
+
+    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-a \
+        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$first_boot_root" \
+        "$lock" acquire
+    [ "$status" -eq 0 ]
+    owner_before="$(cat "$cluster_root/priv/patch-gremlin-upgrade.lock/owner")"
+    [[ "$owner_before" == node-a:* ]]
+    rm -f "$first_boot_root/patch-gremlin-proxmox-lock.marker"
+    printf '%s\n' "$(( $(date +%s) - 86401 ))" \
+        > "$cluster_root/priv/patch-gremlin-upgrade.lock/created"
+
+    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-a \
+        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$rebooted_root" \
+        "$lock" acquire
+    [ "$status" -eq 0 ]
+    owner_after="$(cat "$cluster_root/priv/patch-gremlin-upgrade.lock/owner")"
+    [[ "$owner_after" == node-a:* ]]
+    [ "$owner_after" != "$owner_before" ]
+    [[ "$output" == *"previous owner $owner_before"* ]]
+    [[ "$output" == *"new owner $owner_after"* ]]
+}
+
+@test "setup: proxmox live lock held by another node stays refused" {
+    stage_proxmox_lock_helper
+
+    lock="$ROOTDIR/usr/local/libexec/patch-gremlin-proxmox-lock"
+    cluster_root="$(mktemp -d "$BATS_TEST_TMPDIR/live-cluster-lock.XXXXXX")"
     node_a_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-a-run.XXXXXX")"
     node_b_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-b-run.XXXXXX")"
     mkdir -p "$cluster_root/priv"
@@ -210,21 +245,28 @@ default_install() {
         "$lock" acquire
     [ "$status" -eq 0 ]
     owner_before="$(cat "$cluster_root/priv/patch-gremlin-upgrade.lock/owner")"
-    [[ "$owner_before" == node-a:* ]]
-    [ -s "$node_a_root/patch-gremlin-proxmox-lock.marker" ]
 
-    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-b \
-        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$node_b_root" \
-        "$lock" release
-    [ "$status" -eq 0 ]
-    [ "$(cat "$cluster_root/priv/patch-gremlin-upgrade.lock/owner")" = "$owner_before" ]
-
-    printf '1\n' > "$cluster_root/priv/patch-gremlin-upgrade.lock/created"
     run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-b \
         PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$node_b_root" \
         "$lock" acquire
     [ "$status" -ne 0 ]
     [ "$(cat "$cluster_root/priv/patch-gremlin-upgrade.lock/owner")" = "$owner_before" ]
+}
+
+@test "setup: proxmox owning node releases its lock after its marker is lost" {
+    stage_proxmox_lock_helper
+
+    lock="$ROOTDIR/usr/local/libexec/patch-gremlin-proxmox-lock"
+    cluster_root="$(mktemp -d "$BATS_TEST_TMPDIR/owner-release-lock.XXXXXX")"
+    node_a_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-a-run.XXXXXX")"
+    mkdir -p "$cluster_root/priv"
+    : > "$cluster_root/corosync.conf"
+
+    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-a \
+        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$node_a_root" \
+        "$lock" acquire
+    [ "$status" -eq 0 ]
+    rm -f "$node_a_root/patch-gremlin-proxmox-lock.marker"
 
     run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-a \
         PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$node_a_root" \
@@ -232,6 +274,30 @@ default_install() {
     [ "$status" -eq 0 ]
     [ ! -e "$cluster_root/priv/patch-gremlin-upgrade.lock" ]
     [ ! -e "$node_a_root/patch-gremlin-proxmox-lock.marker" ]
+}
+
+@test "setup: proxmox node cannot release another node's live lock" {
+    stage_proxmox_lock_helper
+
+    lock="$ROOTDIR/usr/local/libexec/patch-gremlin-proxmox-lock"
+    cluster_root="$(mktemp -d "$BATS_TEST_TMPDIR/foreign-release-lock.XXXXXX")"
+    node_a_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-a-run.XXXXXX")"
+    node_b_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-b-run.XXXXXX")"
+    mkdir -p "$cluster_root/priv"
+    : > "$cluster_root/corosync.conf"
+
+    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-a \
+        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$node_a_root" \
+        "$lock" acquire
+    [ "$status" -eq 0 ]
+    owner_before="$(cat "$cluster_root/priv/patch-gremlin-upgrade.lock/owner")"
+
+    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-b \
+        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$node_b_root" \
+        "$lock" release
+    [ "$status" -eq 0 ]
+    [ -d "$cluster_root/priv/patch-gremlin-upgrade.lock" ]
+    [ "$(cat "$cluster_root/priv/patch-gremlin-upgrade.lock/owner")" = "$owner_before" ]
 }
 
 @test "setup: proxmox profile verifies the final effective APT security policy" {

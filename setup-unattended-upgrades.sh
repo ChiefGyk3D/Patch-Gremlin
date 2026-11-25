@@ -423,6 +423,8 @@ run_root="${PATCH_GREMLIN_RUN_ROOT:-/run/patch-gremlin}"
 lock_parent="$pve_root/priv"
 lock_dir="$lock_parent/patch-gremlin-upgrade.lock"
 marker="$run_root/patch-gremlin-proxmox-lock.marker"
+# Automatic upgrades are expected to finish within hours. Keep this at 24
+# hours so a slow upgrade is not mistaken for a crashed owner.
 stale_after=86400
 
 log_message() {
@@ -459,7 +461,8 @@ case "${1:-}" in
         created="$(cat "$lock_dir/created" 2>/dev/null || printf '0')"
         owner="$(cat "$lock_dir/owner" 2>/dev/null || true)"
         [[ "$created" =~ ^[0-9]+$ ]] || created=0
-        if (( now - created > stale_after )) && [[ -z "$owner" ]]; then
+        if (( now - created > stale_after )); then
+            previous_owner="${owner:-unknown}"
             rm -f -- "$lock_dir/created"
             rm -f -- "$lock_dir/owner"
             rmdir -- "$lock_dir" 2>/dev/null || true
@@ -475,7 +478,7 @@ case "${1:-}" in
                 printf '%s\n' "$now" > "$lock_dir/created"
                 mkdir -p "$run_root"
                 printf '%s\n' "$owner" > "$marker"
-                log_message "Replaced a stale Proxmox cluster upgrade lock"
+                log_message "Replaced a stale Proxmox cluster upgrade lock; previous owner $previous_owner; new owner $owner"
                 exit 0
             fi
         fi
@@ -483,10 +486,10 @@ case "${1:-}" in
         exit 1
         ;;
     release)
-        [[ -f "$marker" && -f "$lock_dir/owner" ]] || exit 0
-        marker_owner="$(cat "$marker")"
+        [[ -f "$lock_dir/owner" ]] || exit 0
         lock_owner="$(cat "$lock_dir/owner")"
-        [[ -n "$marker_owner" && "$marker_owner" == "$lock_owner" ]] || exit 0
+        node="$(hostname)"
+        [[ -n "$lock_owner" && "$lock_owner" == "$node:"* ]] || exit 0
         rm -f -- "$lock_dir/created"
         rm -f -- "$lock_dir/owner"
         rmdir -- "$lock_dir" 2>/dev/null || true
