@@ -26,7 +26,8 @@ installed.
 - 🌍 **Timezone-Aware**: Detects and configures the system timezone during setup
 - 🤖 **Automatable**: Every setting can come from the environment — no prompts required
 - 🖥️ **Multi-OS**: Debian/Ubuntu/Raspbian and RHEL/Rocky/AlmaLinux/Amazon Linux/Fedora
-- 🧱 **Proxmox Profile**: Debian security automation with manual Proxmox package updates, manual reboots, and deterministic node staggering
+- 🧱 **Proxmox Profile**: Debian security automation with manual Proxmox package updates, manual reboots,
+  and deterministic node staggering
 - ✅ **Tested**: 107 automated tests running against six distributions in CI
 
 ## Quick Start

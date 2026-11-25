@@ -74,10 +74,15 @@ uninstall() {
         LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
         bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive --profile proxmox
     [ "$status" -eq 0 ]
-    [ -e "$ROOTDIR/etc/apt/apt.conf.d/52patch-gremlin-proxmox" ]
+    [ -e "$ROOTDIR/etc/apt/apt.conf.d/99zz-patch-gremlin-proxmox" ]
+    [ -e "$ROOTDIR/usr/local/libexec/patch-gremlin-proxmox-lock" ]
+    [ -e "$ROOTDIR/etc/needrestart/conf.d/99zz-patch-gremlin-proxmox.conf" ]
     uninstall
     [ "$status" -eq 0 ]
-    [ ! -e "$ROOTDIR/etc/apt/apt.conf.d/52patch-gremlin-proxmox" ]
+    [ ! -e "$ROOTDIR/etc/apt/apt.conf.d/99zz-patch-gremlin-proxmox" ]
+    [ ! -e "$ROOTDIR/usr/local/libexec/patch-gremlin-proxmox-lock" ]
+    [ ! -e "$ROOTDIR/etc/needrestart/conf.d/99zz-patch-gremlin-proxmox.conf" ]
+    [ ! -e "$ROOTDIR/etc/systemd/system/apt-daily-upgrade.timer.d/patch-gremlin.conf" ]
     grep -Fxq '// packaged sentinel' "$ROOTDIR/etc/apt/apt.conf.d/50unattended-upgrades"
 }
 
