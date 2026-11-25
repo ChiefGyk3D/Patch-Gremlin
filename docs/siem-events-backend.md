@@ -13,4 +13,3 @@ URLs.
 
 Direct notifier configuration uses `PATCH_GREMLIN_EVENTS_FILE` and
 `PATCH_GREMLIN_EVENTS_MAX_BYTES`; an empty file setting disables events.
-

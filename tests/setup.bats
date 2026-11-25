@@ -340,6 +340,11 @@ EOF
         EVENTS_FILE=/var/log/patch-gremlin/events.jsonl EVENTS_MAX_BYTES=2048
     [ -x "$ROOTDIR/usr/local/bin/patch-gremlin-prometheus-textfile.sh" ]
     grep -Fq 'OnUnitActiveSec=5min' "$ROOTDIR/etc/systemd/system/patch-gremlin-prometheus.timer"
+    grep -Fxq 'ProtectSystem=strict' "$ROOTDIR/etc/systemd/system/patch-gremlin-prometheus.service"
+    grep -Fxq 'ReadWritePaths=/var/lib/node_exporter/textfile_collector' "$ROOTDIR/etc/systemd/system/patch-gremlin-prometheus.service"
+    grep -Fxq 'PrivateTmp=true' "$ROOTDIR/etc/systemd/system/patch-gremlin-prometheus.service"
+    grep -Fxq 'NoNewPrivileges=true' "$ROOTDIR/etc/systemd/system/patch-gremlin-prometheus.service"
+    grep -Fxq 'ProtectHome=true' "$ROOTDIR/etc/systemd/system/patch-gremlin-prometheus.service"
     grep -Fxq 'PATCH_GREMLIN_EVENTS_FILE=/var/log/patch-gremlin/events.jsonl' "$ROOTDIR/etc/update-notifier/env"
     grep -Fq 'ReadWritePaths=/var/lib/patch-gremlin /run /var/log/patch-gremlin' "$ROOTDIR/etc/systemd/system/update-notifier.service"
 }

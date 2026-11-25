@@ -565,11 +565,19 @@ healthcheck_send() {
 
 pushover_enabled() { [[ "${UPDATE_STATUS:-}" == error && -n "${PUSHOVER_TOKEN:-}" && -n "${PUSHOVER_USER:-}" ]]; }
 pushover_form_body() {
-    local message="${SUMMARY_BODY:-Update run failed}" priority="${PUSHOVER_PRIORITY:-0}"
+    local message="${SUMMARY_BODY:-Update run failed}" priority="${PUSHOVER_PRIORITY:-0}" clean="" c i
+    for ((i = 0; i < ${#message}; i++)); do
+        c="${message:i:1}"
+        if [[ "$c" == [[:cntrl:]] ]]; then clean+=' '; else clean+="$c"; fi
+    done
+    message="$clean"
     message="${message:0:1024}"
     printf 'token=%s&user=%s&message=%s&priority=%s' "$(urlencode "$PUSHOVER_TOKEN")" \
         "$(urlencode "$PUSHOVER_USER")" "$(urlencode "$message")" "$priority"
-    [[ "$priority" == 2 ]] && printf '&retry=%s&expire=%s' "${PUSHOVER_RETRY:-60}" "${PUSHOVER_EXPIRE:-3600}"
+    if [[ "$priority" == 2 ]]; then
+        printf '&retry=%s&expire=%s' "${PUSHOVER_RETRY:-60}" "${PUSHOVER_EXPIRE:-3600}"
+    fi
+    return 0
 }
 pushover_send() {
     local tmp cfg response code
@@ -810,7 +818,7 @@ matrix_logout() {
 }
 
 urlencode() {
-    local s="$1" out="" c i
+    local LC_ALL=C s="$1" out="" c i
     for ((i = 0; i < ${#s}; i++)); do
         c="${s:i:1}"
         case "$c" in

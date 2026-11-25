@@ -15,4 +15,3 @@ Setup inputs use the `LOCAL_` prefix. Doppler name overrides are
 `DOPPLER_PUSHOVER_TOKEN_SECRET` and `DOPPLER_PUSHOVER_USER_SECRET`. Messages
 are limited to 1024 characters. Credentials are form encoded in a payload
 file and never appear in curl arguments or logs.
-

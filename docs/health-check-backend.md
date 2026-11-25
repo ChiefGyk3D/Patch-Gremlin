@@ -15,4 +15,3 @@ Configure one secret and leave it blank to disable the backend:
 
 The URL is passed through a mode-600 curl configuration file, not process
 arguments or logs. Failure text is flattened and limited to 1024 characters.
-

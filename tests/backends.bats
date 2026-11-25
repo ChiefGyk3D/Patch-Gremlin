@@ -57,6 +57,21 @@ setup() { setup_sandbox; load_notifier; }
     [[ "$form" != *'token=leak'* ]]
 }
 
+@test "Pushover truncates multibyte text by character and neutralizes controls" {
+    local form message decoded
+    UPDATE_STATUS=error PUSHOVER_TOKEN=secret PUSHOVER_USER=user
+    SUMMARY_BODY="$(printf 'é%.0s' {1..1023})"$'\n\t\001'"éignored"
+    form="$(pushover_form_body)"
+    message="${form#*message=}"; message="${message%%&priority=*}"
+    decoded="$(printf '%s' "$message" | python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read()), end="")')"
+    [ "${#decoded}" -eq 1024 ]
+    [[ "$decoded" == "$(printf 'é%.0s' {1..1023}) " ]]
+    [[ "$message" == *'%C3%A9'* ]]
+    [[ "$message" != *'%0A'* ]]
+    [[ "$message" != *'%09'* ]]
+    [[ "$message" != *'%01'* ]]
+}
+
 @test "event JSON contains stable schema keys and escapes hostile host input" {
     HOST_NAME='host"\npoison' UPDATE_STATUS=error UPGRADED_COUNT=2 PENDING_SECURITY=1
     HELD_BACK_COUNT=3 REBOOT_REQUIRED=1 RUN_DURATION=9 RUN_ID=rid

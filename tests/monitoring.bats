@@ -270,6 +270,36 @@ EOF
     [ -z "$(find "$out" -name '*.tmp.*' -print -quit)" ]
 }
 
+@test "prometheus textfile: refuses a symlinked textfile directory" {
+    mkdir -p "$SANDBOX/real-textfiles"
+    ln -s "$SANDBOX/real-textfiles" "$SANDBOX/textfiles-link"
+    run env PATCH_GREMLIN_TEXTFILE_DIR="$SANDBOX/textfiles-link" \
+        PATCH_GREMLIN_APT_SIMULATION_FILE="$FIXTURES/apt-empty.txt" \
+        bash "$REPO_ROOT/monitoring/prometheus-textfile.sh"
+    [ "$status" -ne 0 ]
+    [ ! -e "$SANDBOX/real-textfiles/patch_gremlin.prom" ]
+}
+
+@test "prometheus textfile: refuses a symlinked output file" {
+    out="$SANDBOX/textfiles"; mkdir -p "$out"
+    target="$SANDBOX/target"; printf 'unchanged\n' > "$target"
+    ln -s "$target" "$out/patch_gremlin.prom"
+    run env PATCH_GREMLIN_TEXTFILE_DIR="$out" \
+        PATCH_GREMLIN_APT_SIMULATION_FILE="$FIXTURES/apt-empty.txt" \
+        bash "$REPO_ROOT/monitoring/prometheus-textfile.sh"
+    [ "$status" -ne 0 ]
+    [ "$(cat "$target")" = unchanged ]
+}
+
+@test "prometheus textfile: refuses a world-writable textfile directory" {
+    out="$SANDBOX/textfiles"; mkdir -p "$out"; chmod 777 "$out"
+    run env PATCH_GREMLIN_TEXTFILE_DIR="$out" \
+        PATCH_GREMLIN_APT_SIMULATION_FILE="$FIXTURES/apt-empty.txt" \
+        bash "$REPO_ROOT/monitoring/prometheus-textfile.sh"
+    [ "$status" -ne 0 ]
+    [ ! -e "$out/patch_gremlin.prom" ]
+}
+
 @test "prometheus textfile: hostile state is not executed" {
     mkdir -p "$PATCH_GREMLIN_STATE_DIR" "$SANDBOX/textfiles"
     printf 'last_status=$(touch %s)\n' "$SANDBOX/pwned-textfile" > "$PATCH_GREMLIN_STATE_DIR/state"

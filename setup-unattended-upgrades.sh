@@ -697,6 +697,12 @@ EOF
 Type=oneshot
 Environment=PATCH_GREMLIN_TEXTFILE_DIR=${PROMETHEUS_TEXTFILE_DIR}
 ExecStart=/usr/local/bin/patch-gremlin-prometheus-textfile.sh
+User=root
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=${PROMETHEUS_TEXTFILE_DIR}
 EOF
         write_file /etc/systemd/system/patch-gremlin-prometheus.timer 644 <<'EOF'
 [Timer]

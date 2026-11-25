@@ -14,4 +14,3 @@ It exports the issue #56 metric names, including both
 `patch_gremlin_reboot_required` and the compatibility alias
 `node_reboot_required`. Pending packages are labeled `all`, `security`, and
 `proxmox`; apt simulation output supplies the counts.
-

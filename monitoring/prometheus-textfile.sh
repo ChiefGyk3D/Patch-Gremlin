@@ -44,9 +44,32 @@ held="$(printf '%s\n' "$simulation" | sed -n 's/^The following packages have bee
 [[ "$held" -gt 0 ]] || held="${held_back_count:-0}"
 reboot=0; [[ -e "$REBOOT_FILE" ]] && reboot=1
 
-mkdir -p "$TEXTFILE_DIR" || exit 1
+validate_textfile_dir() {
+    local mode owner current_uid
+    [[ "$TEXTFILE_DIR" == /* && -d "$TEXTFILE_DIR" && ! -L "$TEXTFILE_DIR" ]] &&
+        [[ "$(realpath -e -- "$TEXTFILE_DIR" 2>/dev/null)" == "$TEXTFILE_DIR" ]] || {
+        echo "Refusing unsafe Prometheus textfile directory" >&2
+        return 1
+    }
+    mode="$(stat -c '%a' -- "$TEXTFILE_DIR" 2>/dev/null)" || return 1
+    owner="$(stat -c '%u' -- "$TEXTFILE_DIR" 2>/dev/null)" || return 1
+    current_uid="$(id -u)" || return 1
+    [[ "$owner" == 0 || "$owner" == "$current_uid" ]] || {
+        echo "Refusing Prometheus textfile directory with an unexpected owner" >&2
+        return 1
+    }
+    (( (8#$mode & 8#1022) == 0 )) || {
+        echo "Refusing writable or sticky Prometheus textfile directory" >&2
+        return 1
+    }
+}
+
+validate_textfile_dir || exit 1
+[[ ! -L "$OUTPUT_FILE" ]] || { echo "Refusing symlinked Prometheus output file" >&2; exit 1; }
+umask 022
 tmp="$(mktemp "$TEXTFILE_DIR/.patch_gremlin.prom.tmp.XXXXXX")" || exit 1
 trap 'rm -f "$tmp"' EXIT
+exec 3>"$tmp" || exit 1
 {
     echo '# TYPE patch_gremlin_last_success_timestamp_seconds gauge'
     echo "patch_gremlin_last_success_timestamp_seconds $last_success_epoch"
@@ -63,6 +86,7 @@ trap 'rm -f "$tmp"' EXIT
         value=0; [[ "$last_status" == "$status" ]] && value=1
         printf 'patch_gremlin_last_run_status{status="%s"} %s\n' "$status" "$value"
     done
-} > "$tmp"
-chmod 644 "$tmp" && mv -f "$tmp" "$OUTPUT_FILE"
+} >&3
+exec 3>&-
+mv -f -- "$tmp" "$OUTPUT_FILE"
 trap - EXIT
