@@ -378,17 +378,8 @@ backup_file() {
 }
 
 verify_proxmox_apt_policy() {
-    local config_dir managed_name fragment name dump origins allowed bootstrap
+    local config_dir dump origins allowed allowed_origins bootstrap
     config_dir="$(p /etc/apt/apt.conf.d)"
-    managed_name="99zz-patch-gremlin-proxmox"
-
-    for fragment in "$config_dir"/*; do
-        [[ -f "$fragment" ]] || continue
-        name="$(basename "$fragment")"
-        if [[ "$name" > "$managed_name" && "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then
-            die "later APT configuration fragment '$name' would override the Proxmox policy"
-        fi
-    done
 
     command -v apt-config >/dev/null 2>&1 || die "apt-config is required to verify the Proxmox policy"
     mkdir -p "$(p /var/lib/patch-gremlin)"
@@ -403,6 +394,9 @@ verify_proxmox_apt_policy() {
     say "Effective Proxmox unattended-upgrades policy:"
     printf '%s\n' "$allowed"
 
+    allowed_origins="$(printf '%s\n' "$allowed" | grep -E '^Unattended-Upgrade::Allowed-Origins::' || true)"
+    [[ -z "$allowed_origins" ]] ||
+        die "effective unattended-upgrades Allowed-Origins is not empty"
     origins="$(printf '%s\n' "$allowed" | sed -n 's/^Unattended-Upgrade::Origins-Pattern::[^ ]* "\(.*\)";$/\1/p')"
     [[ "$origins" == $'origin=Debian,codename=${distro_codename}-security,label=Debian-Security\norigin=Debian,codename=${distro_codename}-security' ]] ||
         die "effective unattended-upgrades origins are not limited to Debian security"
@@ -425,8 +419,10 @@ EOF
 set -euo pipefail
 
 pve_root="${PATCH_GREMLIN_PVE_ROOT:-/etc/pve}"
+run_root="${PATCH_GREMLIN_RUN_ROOT:-/run/patch-gremlin}"
 lock_parent="$pve_root/priv"
 lock_dir="$lock_parent/patch-gremlin-upgrade.lock"
+marker="$run_root/patch-gremlin-proxmox-lock.marker"
 stale_after=86400
 
 log_message() {
@@ -445,18 +441,40 @@ case "${1:-}" in
             exit 0
         fi
         if mkdir "$lock_dir" 2>/dev/null; then
+            node="$(hostname)"
+            if [[ -r /proc/sys/kernel/random/uuid ]]; then
+                invocation_id="$(cat /proc/sys/kernel/random/uuid)"
+            else
+                invocation_id="$(date +%s).$$.$RANDOM"
+            fi
+            owner="$node:$invocation_id"
+            printf '%s\n' "$owner" > "$lock_dir/owner"
             date +%s > "$lock_dir/created"
+            mkdir -p "$run_root"
+            printf '%s\n' "$owner" > "$marker"
             log_message "Acquired the Proxmox cluster upgrade lock"
             exit 0
         fi
         now="$(date +%s)"
         created="$(cat "$lock_dir/created" 2>/dev/null || printf '0')"
+        owner="$(cat "$lock_dir/owner" 2>/dev/null || true)"
         [[ "$created" =~ ^[0-9]+$ ]] || created=0
-        if (( now - created > stale_after )); then
+        if (( now - created > stale_after )) && [[ -z "$owner" ]]; then
             rm -f -- "$lock_dir/created"
+            rm -f -- "$lock_dir/owner"
             rmdir -- "$lock_dir" 2>/dev/null || true
             if mkdir "$lock_dir" 2>/dev/null; then
+                node="$(hostname)"
+                if [[ -r /proc/sys/kernel/random/uuid ]]; then
+                    invocation_id="$(cat /proc/sys/kernel/random/uuid)"
+                else
+                    invocation_id="$(date +%s).$$.$RANDOM"
+                fi
+                owner="$node:$invocation_id"
+                printf '%s\n' "$owner" > "$lock_dir/owner"
                 printf '%s\n' "$now" > "$lock_dir/created"
+                mkdir -p "$run_root"
+                printf '%s\n' "$owner" > "$marker"
                 log_message "Replaced a stale Proxmox cluster upgrade lock"
                 exit 0
             fi
@@ -465,9 +483,14 @@ case "${1:-}" in
         exit 1
         ;;
     release)
-        [[ -d "$lock_dir" ]] || exit 0
+        [[ -f "$marker" && -f "$lock_dir/owner" ]] || exit 0
+        marker_owner="$(cat "$marker")"
+        lock_owner="$(cat "$lock_dir/owner")"
+        [[ -n "$marker_owner" && "$marker_owner" == "$lock_owner" ]] || exit 0
         rm -f -- "$lock_dir/created"
+        rm -f -- "$lock_dir/owner"
         rmdir -- "$lock_dir" 2>/dev/null || true
+        rm -f -- "$marker"
         log_message "Released the Proxmox cluster upgrade lock"
         ;;
     *)

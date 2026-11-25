@@ -12,8 +12,10 @@ replace the packaged `/etc/apt/apt.conf.d/50unattended-upgrades` conffile. The
 final drop-in clears earlier origin lists, permits only the two explicit Debian
 security origin patterns, and explicitly disables unauthenticated packages. It
 also disables automatic reboot, automatic dependency removal, and unused
-kernel package removal. Setup fails if a lexically later APT fragment exists or
-if `apt-config dump` reports an effective origin outside those two patterns.
+kernel package removal. Setup uses `apt-config dump` as the source of the
+effective policy and fails if `Allowed-Origins` contains any entry or if
+`Origins-Pattern` differs from those two patterns. This includes fragments
+whose names end in `.conf`.
 
 ## Scope and update policy
 
@@ -46,11 +48,16 @@ remain at least the requested number of minutes apart. The profile also sets
 
 On a clustered node, `apt-daily-upgrade.service` acquires
 `/etc/pve/priv/patch-gremlin-upgrade.lock` before it starts. A lock held by
-another node skips that automatic upgrade run. Locks older than 24 hours are
-treated as stale. When `/etc/pve/corosync.conf` is absent, or the shared
-`/etc/pve/priv` path is unavailable, the check logs the condition and allows
-the upgrade to continue. This fail-open behavior keeps standalone nodes and a
-node with an unavailable cluster filesystem from being permanently blocked.
+another node skips that automatic upgrade run. The shared lock records the
+node name and a random invocation ID, and the acquiring node stores the same
+value in a local runtime marker. Cleanup removes the lock only when both values
+match. An incomplete lock with no owner record is eligible for cleanup after
+24 hours. A valid owned lock is never removed as stale because its owner cannot
+be proven inactive without contacting that node. When `/etc/pve/corosync.conf`
+is absent, or the shared `/etc/pve/priv` path is unavailable, the check logs
+the condition and allows the upgrade to continue. This fail-open behavior
+keeps standalone nodes and a node with an unavailable cluster filesystem from
+being permanently blocked.
 
 INFERRED: `/etc/pve/priv` is root-only cluster configuration storage, and an
 atomic directory creation there acts as cluster-wide exclusion. The behavior
