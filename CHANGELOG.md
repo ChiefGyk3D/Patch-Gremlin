@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Proxmox profile and rolling update signals
+
+- Add an opt-in Proxmox profile that preserves the packaged APT conffile,
+  permits Debian security origins only, disables automatic reboot and package
+  removal, and supports deterministic update slots at least 60 minutes apart.
+- Split pending package metrics by all, Debian security, and Proxmox origin;
+  add held-back and reboot-required signals with a reboot package count.
+- Document the manual, one-node-at-a-time Proxmox rolling update policy.
+
 ### Notification backends and observability
 
 - Add a small ordered notification backend registry, independent health-check

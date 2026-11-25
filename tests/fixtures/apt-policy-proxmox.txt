@@ -1,0 +1,24 @@
+base-files:
+  Installed: 13.8+deb13u1
+  Candidate: 13.8+deb13u2
+  Version table:
+     13.8+deb13u2 500
+        500 http://deb.debian.org/debian trixie/main amd64 Packages
+linux-libc-dev:
+  Installed: 6.12.48-1
+  Candidate: 6.12.57-1
+  Version table:
+     6.12.57-1 500
+        500 http://security.debian.org/debian-security trixie-security/main amd64 Packages
+pve-manager:
+  Installed: 9.0.5
+  Candidate: 9.0.10
+  Version table:
+     9.0.10 500
+        500 http://download.proxmox.com/debian/pve trixie/pve-no-subscription amd64 Packages
+hostile-name:
+  Installed: 1
+  Candidate: 2
+  Version table:
+     2 500
+        500 http://deb.debian.org/debian trixie/main amd64 Packages

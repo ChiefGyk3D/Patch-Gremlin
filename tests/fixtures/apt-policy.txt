@@ -1,0 +1,18 @@
+openssl:
+  Installed: 3.0.0
+  Candidate: 3.0.1
+  Version table:
+     3.0.1 500
+        500 http://security.debian.org/debian-security stable-security/main amd64 Packages
+pve-manager:
+  Installed: 9.0
+  Candidate: 9.1
+  Version table:
+     9.1 500
+        500 https://enterprise.proxmox.com/debian/pve stable/pve-enterprise amd64 Packages
+curl:
+  Installed: 8.0
+  Candidate: 8.1
+  Version table:
+     8.1 500
+        500 http://deb.debian.org/debian stable/main amd64 Packages

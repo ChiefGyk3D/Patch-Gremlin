@@ -26,6 +26,8 @@ installed.
 - 🌍 **Timezone-Aware**: Detects and configures the system timezone during setup
 - 🤖 **Automatable**: Every setting can come from the environment — no prompts required
 - 🖥️ **Multi-OS**: Debian/Ubuntu/Raspbian and RHEL/Rocky/AlmaLinux/Amazon Linux/Fedora
+- 🧱 **Proxmox Profile**: Debian security automation with manual Proxmox package updates, manual reboots,
+  and deterministic node staggering
 - ✅ **Tested**: 107 automated tests running against six distributions in CI
 
 ## Quick Start
@@ -206,6 +208,19 @@ Local-mode endpoints come from `LOCAL_DISCORD_WEBHOOK`, `LOCAL_SLACK_WEBHOOK`,
 
 All values are validated **before** anything is written, so a malformed
 `UPDATE_TIME` is rejected rather than ending up inside a systemd unit.
+
+### Proxmox profile
+
+Use `--profile proxmox` to apply Debian security updates without automatically
+installing Proxmox repository packages, rebooting the node, or removing old
+kernels and unused dependencies. The profile uses a late APT drop-in and
+preserves the packaged `50unattended-upgrades` conffile.
+
+For cluster scheduling, pass both `--stagger-minutes N` and
+`--stagger-index I`. `N` must be at least 60 and `I` is zero-based. Proxmox
+package updates remain manual through the rolling updater, one node at a time.
+See the [Proxmox profile guide](docs/proxmox-profile.md) for policy details,
+reboot behavior, metrics, and verification commands.
 
 ### When Notifications Fire
 

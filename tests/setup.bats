@@ -70,6 +70,322 @@ default_install() {
     [ "$status" -eq 2 ]
 }
 
+@test "setup: proxmox profile uses a late drop-in and preserves the packaged conffile" {
+    mkdir -p "$ROOTDIR/etc/apt/apt.conf.d"
+    printf '%s\n' '// packaged sentinel' > "$ROOTDIR/etc/apt/apt.conf.d/50unattended-upgrades"
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian UPDATE_TYPE=all UPDATE_SCHEDULE=daily \
+        UPDATE_TIME=02:00 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=true \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive --profile proxmox
+    [ "$status" -eq 0 ]
+    grep -Fxq '// packaged sentinel' "$ROOTDIR/etc/apt/apt.conf.d/50unattended-upgrades"
+    config="$ROOTDIR/etc/apt/apt.conf.d/99zz-patch-gremlin-proxmox"
+    [ -f "$config" ]
+    [ "$(stat -c '%a' "$config")" = 644 ]
+    grep -Fxq '#clear Unattended-Upgrade::Allowed-Origins;' "$config"
+    grep -Fxq '#clear Unattended-Upgrade::Origins-Pattern;' "$config"
+    grep -Fq 'origin=Debian,codename=${distro_codename}-security,label=Debian-Security' "$config"
+    ! grep -Ei 'origin=.*(proxmox|pve-(enterprise|no-subscription))' "$config"
+    grep -Fxq 'Unattended-Upgrade::Automatic-Reboot "false";' "$config"
+    grep -Fxq 'Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";' "$config"
+    grep -Fxq 'Unattended-Upgrade::Remove-Unused-Dependencies "false";' "$config"
+    grep -Fxq 'Unattended-Upgrade::Remove-New-Unused-Dependencies "false";' "$config"
+}
+
+@test "setup: proxmox profile rejects non-Debian systems" {
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=rhel UPDATE_TYPE=security UPDATE_SCHEDULE=daily \
+        UPDATE_TIME=02:00 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=false \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive --profile proxmox
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Debian"* ]]
+    [ ! -e "$ROOTDIR/etc/dnf/automatic.conf" ]
+}
+
+@test "setup: stagger offsets the timer with no random overlap" {
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian UPDATE_TYPE=security UPDATE_SCHEDULE=daily \
+        UPDATE_TIME=02:30 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=false \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive \
+        --profile proxmox --stagger-minutes 75 --stagger-index 2
+    [ "$status" -eq 0 ]
+    timer="$ROOTDIR/etc/systemd/system/apt-daily-upgrade.timer.d/patch-gremlin.conf"
+    grep -Fxq 'OnCalendar=*-*-* 05:00:00' "$timer"
+    grep -Fxq 'RandomizedDelaySec=0' "$timer"
+    grep -Fxq 'OnCalendar=*-*-* 07:00:00' "$ROOTDIR/etc/systemd/system/update-notifier.timer"
+    [ "$(stat -c '%a' "$timer")" = 644 ]
+    [ -z "$(find "$(dirname "$timer")" -name '*.tmp.*' -print -quit)" ]
+}
+
+@test "setup: proxmox profile serializes clustered upgrades and constrains needrestart" {
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian UPDATE_TYPE=security UPDATE_SCHEDULE=daily \
+        UPDATE_TIME=02:30 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=false \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive --profile proxmox
+    [ "$status" -eq 0 ]
+
+    timer="$ROOTDIR/etc/systemd/system/apt-daily-upgrade.timer.d/patch-gremlin.conf"
+    service="$ROOTDIR/etc/systemd/system/apt-daily-upgrade.service.d/patch-gremlin.conf"
+    needrestart="$ROOTDIR/etc/needrestart/conf.d/99zz-patch-gremlin-proxmox.conf"
+    lock="$ROOTDIR/usr/local/libexec/patch-gremlin-proxmox-lock"
+    grep -Fxq 'Persistent=false' "$timer"
+    grep -Fxq 'Environment=NEEDRESTART_MODE=l' "$service"
+    grep -Fxq 'ExecCondition=/usr/local/libexec/patch-gremlin-proxmox-lock acquire' "$service"
+    grep -Fxq 'ExecStopPost=/usr/local/libexec/patch-gremlin-proxmox-lock release' "$service"
+    for unit in corosync pve-cluster pveproxy pvedaemon pvestatd; do
+        grep -Fq "$unit" "$needrestart"
+    done
+
+    cluster_root="$(mktemp -d "$BATS_TEST_TMPDIR/cluster-lock.XXXXXX")"
+    cluster_run_root="$(mktemp -d "$BATS_TEST_TMPDIR/cluster-run.XXXXXX")"
+    mkdir -p "$cluster_root/priv"
+    : > "$cluster_root/corosync.conf"
+    run env PATCH_GREMLIN_PVE_ROOT="$cluster_root" \
+        PATCH_GREMLIN_RUN_ROOT="$cluster_run_root" "$lock" acquire
+    [ "$status" -eq 0 ]
+    [ -f "$cluster_root/priv/patch-gremlin-upgrade.lock/created" ]
+    run env PATCH_GREMLIN_PVE_ROOT="$cluster_root" \
+        PATCH_GREMLIN_RUN_ROOT="$cluster_run_root" "$lock" acquire
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"another cluster node"* ]]
+    run env PATCH_GREMLIN_PVE_ROOT="$cluster_root" \
+        PATCH_GREMLIN_RUN_ROOT="$cluster_run_root" "$lock" release
+    [ "$status" -eq 0 ]
+    [ ! -e "$cluster_root/priv/patch-gremlin-upgrade.lock" ]
+
+    mkdir "$cluster_root/priv/patch-gremlin-upgrade.lock"
+    printf '1\n' > "$cluster_root/priv/patch-gremlin-upgrade.lock/created"
+    run env PATCH_GREMLIN_PVE_ROOT="$cluster_root" \
+        PATCH_GREMLIN_RUN_ROOT="$cluster_run_root" "$lock" acquire
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"stale"* ]]
+    run env PATCH_GREMLIN_PVE_ROOT="$cluster_root" \
+        PATCH_GREMLIN_RUN_ROOT="$cluster_run_root" "$lock" release
+    [ "$status" -eq 0 ]
+
+    noncluster_root="$(mktemp -d "$BATS_TEST_TMPDIR/noncluster-lock.XXXXXX")"
+    run env PATCH_GREMLIN_PVE_ROOT="$noncluster_root" \
+        PATCH_GREMLIN_RUN_ROOT="$cluster_run_root" "$lock" acquire
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"not clustered"* ]]
+    : > "$noncluster_root/corosync.conf"
+    run env PATCH_GREMLIN_PVE_ROOT="$noncluster_root" \
+        PATCH_GREMLIN_RUN_ROOT="$cluster_run_root" "$lock" acquire
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"lock path is absent"* ]]
+
+    proxmox_root="$ROOTDIR"
+    ROOTDIR="$(mktemp -d "$BATS_TEST_TMPDIR/default-profile.XXXXXX")"
+    export ROOTDIR
+    default_install
+    [ "$status" -eq 0 ]
+    refute grep -Fq 'Persistent=false' \
+        "$ROOTDIR/etc/systemd/system/apt-daily-upgrade.timer.d/patch-gremlin.conf"
+    [ ! -e "$ROOTDIR/etc/needrestart/conf.d/99zz-patch-gremlin-proxmox.conf" ]
+    ROOTDIR="$proxmox_root"
+    export ROOTDIR
+}
+
+stage_proxmox_lock_helper() {
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian UPDATE_TYPE=security UPDATE_SCHEDULE=daily \
+        UPDATE_TIME=02:30 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=false \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive --profile proxmox
+    [ "$status" -eq 0 ]
+}
+
+@test "setup: proxmox lock is reacquired after its owner crashes and the stale age passes" {
+    stage_proxmox_lock_helper
+
+    lock="$ROOTDIR/usr/local/libexec/patch-gremlin-proxmox-lock"
+    cluster_root="$(mktemp -d "$BATS_TEST_TMPDIR/crashed-cluster-lock.XXXXXX")"
+    first_boot_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-a-first-boot.XXXXXX")"
+    rebooted_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-a-rebooted.XXXXXX")"
+    mkdir -p "$cluster_root/priv"
+    : > "$cluster_root/corosync.conf"
+
+    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-a \
+        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$first_boot_root" \
+        "$lock" acquire
+    [ "$status" -eq 0 ]
+    owner_before="$(cat "$cluster_root/priv/patch-gremlin-upgrade.lock/owner")"
+    [[ "$owner_before" == node-a:* ]]
+    rm -f "$first_boot_root/patch-gremlin-proxmox-lock.marker"
+    printf '%s\n' "$(( $(date +%s) - 86401 ))" \
+        > "$cluster_root/priv/patch-gremlin-upgrade.lock/created"
+
+    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-a \
+        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$rebooted_root" \
+        "$lock" acquire
+    [ "$status" -eq 0 ]
+    owner_after="$(cat "$cluster_root/priv/patch-gremlin-upgrade.lock/owner")"
+    [[ "$owner_after" == node-a:* ]]
+    [ "$owner_after" != "$owner_before" ]
+    [[ "$output" == *"previous owner $owner_before"* ]]
+    [[ "$output" == *"new owner $owner_after"* ]]
+}
+
+@test "setup: proxmox live lock held by another node stays refused" {
+    stage_proxmox_lock_helper
+
+    lock="$ROOTDIR/usr/local/libexec/patch-gremlin-proxmox-lock"
+    cluster_root="$(mktemp -d "$BATS_TEST_TMPDIR/live-cluster-lock.XXXXXX")"
+    node_a_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-a-run.XXXXXX")"
+    node_b_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-b-run.XXXXXX")"
+    mkdir -p "$cluster_root/priv"
+    : > "$cluster_root/corosync.conf"
+
+    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-a \
+        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$node_a_root" \
+        "$lock" acquire
+    [ "$status" -eq 0 ]
+    owner_before="$(cat "$cluster_root/priv/patch-gremlin-upgrade.lock/owner")"
+
+    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-b \
+        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$node_b_root" \
+        "$lock" acquire
+    [ "$status" -ne 0 ]
+    [ "$(cat "$cluster_root/priv/patch-gremlin-upgrade.lock/owner")" = "$owner_before" ]
+}
+
+@test "setup: proxmox owning node releases its lock after its marker is lost" {
+    stage_proxmox_lock_helper
+
+    lock="$ROOTDIR/usr/local/libexec/patch-gremlin-proxmox-lock"
+    cluster_root="$(mktemp -d "$BATS_TEST_TMPDIR/owner-release-lock.XXXXXX")"
+    node_a_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-a-run.XXXXXX")"
+    mkdir -p "$cluster_root/priv"
+    : > "$cluster_root/corosync.conf"
+
+    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-a \
+        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$node_a_root" \
+        "$lock" acquire
+    [ "$status" -eq 0 ]
+    rm -f "$node_a_root/patch-gremlin-proxmox-lock.marker"
+
+    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-a \
+        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$node_a_root" \
+        "$lock" release
+    [ "$status" -eq 0 ]
+    [ ! -e "$cluster_root/priv/patch-gremlin-upgrade.lock" ]
+    [ ! -e "$node_a_root/patch-gremlin-proxmox-lock.marker" ]
+}
+
+@test "setup: proxmox node cannot release another node's live lock" {
+    stage_proxmox_lock_helper
+
+    lock="$ROOTDIR/usr/local/libexec/patch-gremlin-proxmox-lock"
+    cluster_root="$(mktemp -d "$BATS_TEST_TMPDIR/foreign-release-lock.XXXXXX")"
+    node_a_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-a-run.XXXXXX")"
+    node_b_root="$(mktemp -d "$BATS_TEST_TMPDIR/node-b-run.XXXXXX")"
+    mkdir -p "$cluster_root/priv"
+    : > "$cluster_root/corosync.conf"
+
+    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-a \
+        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$node_a_root" \
+        "$lock" acquire
+    [ "$status" -eq 0 ]
+    owner_before="$(cat "$cluster_root/priv/patch-gremlin-upgrade.lock/owner")"
+
+    run env PATH="$HELPERS:$PATH" STUB_HOSTNAME=node-b \
+        PATCH_GREMLIN_PVE_ROOT="$cluster_root" PATCH_GREMLIN_RUN_ROOT="$node_b_root" \
+        "$lock" release
+    [ "$status" -eq 0 ]
+    [ -d "$cluster_root/priv/patch-gremlin-upgrade.lock" ]
+    [ "$(cat "$cluster_root/priv/patch-gremlin-upgrade.lock/owner")" = "$owner_before" ]
+}
+
+@test "setup: proxmox profile verifies the final effective APT security policy" {
+    mkdir -p "$ROOTDIR/etc/apt/apt.conf.d"
+    cat > "$ROOTDIR/etc/apt/apt.conf.d/98-hostile-earlier" <<'EOF'
+Unattended-Upgrade::Origins-Pattern { "origin=Proxmox"; };
+Unattended-Upgrade::Automatic-Reboot "true";
+APT::Get::AllowUnauthenticated "true";
+EOF
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian UPDATE_TYPE=security UPDATE_SCHEDULE=daily \
+        UPDATE_TIME=02:30 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=false \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive --profile proxmox
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Effective Proxmox unattended-upgrades policy:"* ]]
+    [[ "$output" == *'origin=Debian,codename=${distro_codename}-security'* ]]
+    [[ "$output" != *'origin=Proxmox'* ]]
+    config="$ROOTDIR/etc/apt/apt.conf.d/99zz-patch-gremlin-proxmox"
+    [ -f "$config" ]
+    grep -Fxq 'APT::Get::AllowUnauthenticated "false";' "$config"
+    [ ! -e "$ROOTDIR/etc/apt/apt.conf.d/52patch-gremlin-proxmox" ]
+
+    cat > "$ROOTDIR/etc/apt/apt.conf.d/99zzz-hostile-later" <<'EOF'
+Unattended-Upgrade::Origins-Pattern { "origin=Proxmox"; };
+EOF
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian UPDATE_TYPE=security UPDATE_SCHEDULE=daily \
+        UPDATE_TIME=02:30 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=false \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive --profile proxmox
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"effective unattended-upgrades origins are not limited to Debian security"* ]]
+
+    proxmox_root="$ROOTDIR"
+    ROOTDIR="$(mktemp -d "$BATS_TEST_TMPDIR/default-apt.XXXXXX")"
+    export ROOTDIR
+    default_install
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Effective Proxmox unattended-upgrades policy:"* ]]
+    ROOTDIR="$proxmox_root"
+    export ROOTDIR
+}
+
+@test "setup: proxmox policy rejects a later .conf fragment" {
+    mkdir -p "$ROOTDIR/etc/apt/apt.conf.d"
+    cat > "$ROOTDIR/etc/apt/apt.conf.d/99zzz-hostile.conf" <<'EOF'
+Unattended-Upgrade::Allowed-Origins { "Debian:stable"; };
+EOF
+
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian UPDATE_TYPE=security UPDATE_SCHEDULE=daily \
+        UPDATE_TIME=02:30 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=false \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive --profile proxmox
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"effective unattended-upgrades Allowed-Origins is not empty"* ]]
+}
+
+@test "setup: proxmox policy rejects effective Allowed-Origins entries" {
+    mkdir -p "$ROOTDIR/etc/apt/apt.conf.d"
+    cat > "$ROOTDIR/etc/apt/apt.conf.d/99zzz-hostile" <<'EOF'
+Unattended-Upgrade::Allowed-Origins { "Debian:stable"; };
+EOF
+
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian UPDATE_TYPE=security UPDATE_SCHEDULE=daily \
+        UPDATE_TIME=02:30 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=false \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive --profile proxmox
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"effective unattended-upgrades Allowed-Origins is not empty"* ]]
+}
+
+@test "setup: stagger validates pairs, minimum spacing, and daily range" {
+    for args in '--stagger-minutes 60' '--stagger-index 1' \
+        '--stagger-minutes sixty --stagger-index 1' \
+        '--stagger-minutes 59 --stagger-index 1' \
+        '--stagger-minutes 800 --stagger-index 2'; do
+        # shellcheck disable=SC2086
+        run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+            PATCH_GREMLIN_OS_TYPE=debian bash "$REPO_ROOT/setup-unattended-upgrades.sh" \
+            --non-interactive --profile proxmox $args
+        [ "$status" -eq 2 ]
+        [[ "$output" == *"stagger"* ]]
+    done
+}
+
 # --------------------------------------------------------------------------
 # Regression: weekly preset without UPDATE_DAY
 # --------------------------------------------------------------------------

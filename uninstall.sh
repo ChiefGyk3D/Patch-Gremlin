@@ -94,7 +94,11 @@ rm -f "$(p /etc/systemd/system/apt-daily-upgrade.service.d/patch-gremlin.conf)" 
       "$(p /etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf)" \
       "$(p /etc/systemd/system/dnf5-automatic.service.d/patch-gremlin.conf)" \
       "$(p /etc/systemd/system/yum-cron.service.d/patch-gremlin.conf)" \
-      "$(p /etc/apt/apt.conf.d/99patch-gremlin-notification)"
+      "$(p /etc/apt/apt.conf.d/99patch-gremlin-notification)" \
+      "$(p /etc/apt/apt.conf.d/99zz-patch-gremlin-proxmox)" \
+      "$(p /etc/apt/apt.conf.d/52patch-gremlin-proxmox)" \
+      "$(p /etc/needrestart/conf.d/99zz-patch-gremlin-proxmox.conf)" \
+      "$(p /usr/local/libexec/patch-gremlin-proxmox-lock)"
 # Only our own drop-in goes; the directories may hold other admins' files, so
 # they are removed only if they end up empty.
 rm -f "$(p /etc/systemd/system/apt-daily-upgrade.timer.d/patch-gremlin.conf)" \
@@ -120,6 +124,8 @@ rm -f "$(p /usr/local/bin/update-notifier.sh)" \
 say "${YELLOW}Removing configuration and state...${NC}"
 rm -rf "$(p /etc/update-notifier)" "$(p /var/lib/patch-gremlin)"
 rm -f "$(p /run/patch-gremlin.lock)"
+rm -f "$(p /run/patch-gremlin/patch-gremlin-proxmox-lock.marker)"
+rmdir "$(p /run/patch-gremlin)" 2>/dev/null || true
 ok "Removed secrets, configuration and state"
 
 run_systemctl daemon-reload
