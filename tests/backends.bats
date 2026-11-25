@@ -58,18 +58,49 @@ setup() { setup_sandbox; load_notifier; }
 }
 
 @test "Pushover truncates multibyte text by character and neutralizes controls" {
-    local form message decoded
+    local form message decoded expected
+    export LC_ALL=C.UTF-8
     UPDATE_STATUS=error PUSHOVER_TOKEN=secret PUSHOVER_USER=user
-    SUMMARY_BODY="$(printf 'é%.0s' {1..1023})"$'\n\t\001'"éignored"
-    form="$(pushover_form_body)"
+    SUMMARY_BODY="$(python3 -I -c 'print("é" * 1023, end="")')"$'\n\t\001'"éignored"
+    form="$(LC_ALL=C pushover_form_body)"
     message="${form#*message=}"; message="${message%%&priority=*}"
-    decoded="$(printf '%s' "$message" | python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read()), end="")')"
+    decoded="$(printf '%s' "$message" | python3 -I -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read()), end="")')"
+    expected="$(python3 -I -c 'print("é" * 1023 + " ", end="")')"
     [ "${#decoded}" -eq 1024 ]
-    [[ "$decoded" == "$(printf 'é%.0s' {1..1023}) " ]]
+    [[ "$decoded" == "$expected" ]]
     [[ "$message" == *'%C3%A9'* ]]
     [[ "$message" != *'%0A'* ]]
     [[ "$message" != *'%09'* ]]
     [[ "$message" != *'%01'* ]]
+}
+
+@test "Pushover replaces invalid UTF-8 without failing" {
+    local form message decoded
+    export LC_ALL=C.UTF-8
+    UPDATE_STATUS=error PUSHOVER_TOKEN=secret PUSHOVER_USER=user
+    SUMMARY_BODY="$(printf '\377bad')"
+    form="$(LC_ALL=C pushover_form_body)"
+    message="${form#*message=}"; message="${message%%&priority=*}"
+    decoded="$(printf '%s' "$message" | python3 -I -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read()), end="")')"
+    [[ "$decoded" == $'\uFFFDbad' ]]
+    [[ "$message" == '%EF%BF%BDbad' ]]
+}
+
+@test "Pushover preserves 1024 characters and truncates the 1025th" {
+    local form message decoded
+    export LC_ALL=C.UTF-8
+    UPDATE_STATUS=error PUSHOVER_TOKEN=secret PUSHOVER_USER=user
+    SUMMARY_BODY="$(python3 -I -c 'print("é" * 1024, end="")')"
+    form="$(LC_ALL=C pushover_form_body)"
+    message="${form#*message=}"; message="${message%%&priority=*}"
+    decoded="$(printf '%s' "$message" | python3 -I -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read()), end="")')"
+    [[ "$decoded" == "$(python3 -I -c 'print("é" * 1024, end="")')" ]]
+
+    SUMMARY_BODY+="x"
+    form="$(LC_ALL=C pushover_form_body)"
+    message="${form#*message=}"; message="${message%%&priority=*}"
+    decoded="$(printf '%s' "$message" | python3 -I -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read()), end="")')"
+    [[ "$decoded" == "$(python3 -I -c 'print("é" * 1024, end="")')" ]]
 }
 
 @test "event JSON contains stable schema keys and escapes hostile host input" {

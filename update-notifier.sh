@@ -564,16 +564,23 @@ healthcheck_send() {
 }
 
 pushover_enabled() { [[ "${UPDATE_STATUS:-}" == error && -n "${PUSHOVER_TOKEN:-}" && -n "${PUSHOVER_USER:-}" ]]; }
+pushover_message_encode() {
+    local encoded
+    encoded="$(printf '%s' "$1" | python3 -I -c '
+import sys
+import urllib.parse
+
+text = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+text = "".join(" " if ord(char) < 32 or 127 <= ord(char) <= 159 else char for char in text)
+sys.stdout.write(urllib.parse.quote(text[:1024], safe="-._~"))
+')" || encoded=""
+    printf '%s' "$encoded"
+    return 0
+}
 pushover_form_body() {
-    local message="${SUMMARY_BODY:-Update run failed}" priority="${PUSHOVER_PRIORITY:-0}" clean="" c i
-    for ((i = 0; i < ${#message}; i++)); do
-        c="${message:i:1}"
-        if [[ "$c" == [[:cntrl:]] ]]; then clean+=' '; else clean+="$c"; fi
-    done
-    message="$clean"
-    message="${message:0:1024}"
+    local message="${SUMMARY_BODY:-Update run failed}" priority="${PUSHOVER_PRIORITY:-0}"
     printf 'token=%s&user=%s&message=%s&priority=%s' "$(urlencode "$PUSHOVER_TOKEN")" \
-        "$(urlencode "$PUSHOVER_USER")" "$(urlencode "$message")" "$priority"
+        "$(urlencode "$PUSHOVER_USER")" "$(pushover_message_encode "$message")" "$priority"
     if [[ "$priority" == 2 ]]; then
         printf '&retry=%s&expire=%s' "${PUSHOVER_RETRY:-60}" "${PUSHOVER_EXPIRE:-3600}"
     fi
