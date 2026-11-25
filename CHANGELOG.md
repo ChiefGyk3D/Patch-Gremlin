@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Notification backends and observability
+
+- Add a small ordered notification backend registry, independent health-check
+  run pings, error-only Pushover delivery, timer-driven Prometheus textfile
+  metrics, and schema-1 SIEM JSONL events with capped rotation.
+
 ### Fixed
 
 - Harden state file handling, parser correctness, reboot default and secret

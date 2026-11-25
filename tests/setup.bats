@@ -327,6 +327,35 @@ EOF
     grep -q 'systemctl enable --now update-notifier.timer' "$ROOTDIR/systemctl.log"
 }
 
+@test "setup: new observability backends are disabled by default" {
+    default_install
+    [ "$status" -eq 0 ]
+    [ ! -e "$ROOTDIR/etc/systemd/system/patch-gremlin-prometheus.timer" ]
+    ! grep -q '^PATCH_GREMLIN_EVENTS_FILE=/var/log' "$ROOTDIR/etc/update-notifier/env"
+}
+
+@test "setup: explicit Prometheus and events opt-in installs exact settings" {
+    default_install ENABLE_PROMETHEUS=true ENABLE_EVENTS=true \
+        PROMETHEUS_TEXTFILE_DIR=/var/lib/node_exporter/textfile_collector \
+        EVENTS_FILE=/var/log/patch-gremlin/events.jsonl EVENTS_MAX_BYTES=2048
+    [ -x "$ROOTDIR/usr/local/bin/patch-gremlin-prometheus-textfile.sh" ]
+    grep -Fq 'OnUnitActiveSec=5min' "$ROOTDIR/etc/systemd/system/patch-gremlin-prometheus.timer"
+    grep -Fxq 'ProtectSystem=strict' "$ROOTDIR/etc/systemd/system/patch-gremlin-prometheus.service"
+    grep -Fxq 'ReadWritePaths=/var/lib/node_exporter/textfile_collector' "$ROOTDIR/etc/systemd/system/patch-gremlin-prometheus.service"
+    grep -Fxq 'PrivateTmp=true' "$ROOTDIR/etc/systemd/system/patch-gremlin-prometheus.service"
+    grep -Fxq 'NoNewPrivileges=true' "$ROOTDIR/etc/systemd/system/patch-gremlin-prometheus.service"
+    grep -Fxq 'ProtectHome=true' "$ROOTDIR/etc/systemd/system/patch-gremlin-prometheus.service"
+    grep -Fxq 'PATCH_GREMLIN_EVENTS_FILE=/var/log/patch-gremlin/events.jsonl' "$ROOTDIR/etc/update-notifier/env"
+    grep -Fq 'ReadWritePaths=/var/lib/patch-gremlin /run /var/log/patch-gremlin' "$ROOTDIR/etc/systemd/system/update-notifier.service"
+}
+
+@test "setup: rejects insecure health-check URL and incomplete Pushover credentials" {
+    default_install LOCAL_DISCORD_WEBHOOK= LOCAL_HEALTHCHECK_PING_URL=http://example.invalid/ping
+    [ "$status" -ne 0 ]; [[ "$output" == *'must use HTTPS'* ]]
+    default_install LOCAL_DISCORD_WEBHOOK= LOCAL_PUSHOVER_TOKEN=secret LOCAL_PUSHOVER_USER=
+    [ "$status" -ne 0 ]; [[ "$output" == *'requires both'* ]]
+}
+
 @test "setup: service uses EnvironmentFile and is hardened" {
     default_install
     [ "$status" -eq 0 ]

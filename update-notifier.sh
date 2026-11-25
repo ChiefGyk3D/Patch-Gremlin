@@ -30,6 +30,8 @@ CONFIG_FILE="${PATCH_GREMLIN_CONFIG_FILE:-/etc/update-notifier/config.sh}"
 ENV_FILE="${PATCH_GREMLIN_ENV_FILE:-/etc/update-notifier/env}"
 STATE_DIR="${PATCH_GREMLIN_STATE_DIR:-/var/lib/patch-gremlin}"
 LOCK_FILE="${PATCH_GREMLIN_LOCK_FILE:-/run/patch-gremlin.lock}"
+EVENTS_FILE="${PATCH_GREMLIN_EVENTS_FILE:-}"
+EVENTS_MAX_BYTES="${PATCH_GREMLIN_EVENTS_MAX_BYTES:-1048576}"
 
 # Discord embed colours
 readonly COLOR_GREEN=5814783
@@ -343,6 +345,7 @@ build_summary() {
 
     local kept_back error_msg
     kept_back="$(parse_kept_back "$log_file" "$os_type")"
+    HELD_BACK_COUNT="$(printf '%s' "$kept_back" | wc -w | tr -d ' ')"
     error_msg="$(parse_last_error "$log_file" "$os_type")"
 
     # ---- status ----
@@ -522,6 +525,106 @@ record_result() {
         ERRORS+="${platform}; "
     fi
 }
+
+# A backend is one self-contained function and one registration line.
+# Registration order is delivery order. Healthcheck is registered first.
+BACKENDS=()
+register_backend() { BACKENDS+=("$1"); }
+dispatch_backends() {
+    local backend
+    for backend in "${BACKENDS[@]}"; do
+        "$backend"
+    done
+    return 0
+}
+
+healthcheck_enabled() { [[ "${HEALTHCHECK_PING_URL:-}" =~ ^https:// ]]; }
+healthcheck_ping() {
+    local phase="$1" detail="${2:-}" url base query cfg response code
+    [[ "${HEALTHCHECK_PING_URL:-}" =~ ^https:// ]] || { log "WARNING: Health-check ping URL must use HTTPS"; return 1; }
+    case "$phase" in start|fail|success) ;; *) return 1 ;; esac
+    base="${HEALTHCHECK_PING_URL%%\?*}"; query=""
+    [[ "$HEALTHCHECK_PING_URL" == *\?* ]] && query="${HEALTHCHECK_PING_URL#*\?}"
+    url="${base%/}"
+    [[ "$phase" == start ]] && url+="/start"
+    [[ "$phase" == fail ]] && url+="/fail"
+    [[ -n "$query" ]] && url+="?$query"
+    url+="$([[ "$url" == *\?* ]] && printf '&' || printf '?')rid=$(urlencode "${RUN_ID:-unknown}")"
+    make_curl_config "$url"; cfg="$MAKE_TEMP_RESULT"
+    [[ "$DRY_RUN" == true ]] && { log "DRY_RUN: would send Health-check $phase ping"; return 0; }
+    detail="${detail//$'\n'/ }"; detail="${detail:0:1024}"
+    response="$(printf '%s' "$detail" | curl -sS -w '\n%{http_code}' --proto '=https' --tlsv1.2 \
+        --max-time 8 --retry 2 --retry-delay 1 --retry-max-time 24 --data-binary @- -K "$cfg" 2>/dev/null || printf '\n000')"
+    code="$(printf '%s' "$response" | tail -n1 | tr -cd 0-9)"
+    [[ "${code:-0}" -ge 200 && "${code:-0}" -lt 300 ]] || { log "WARNING: Health-check $phase ping failed (HTTP ${code:-0})"; return 1; }
+}
+healthcheck_send() {
+    if [[ "${HEALTHCHECK_STARTED:-false}" != true ]]; then healthcheck_ping start "" || true; fi
+    NOTIFICATION_SENT=true
+}
+
+pushover_enabled() { [[ "${UPDATE_STATUS:-}" == error && -n "${PUSHOVER_TOKEN:-}" && -n "${PUSHOVER_USER:-}" ]]; }
+pushover_message_encode() {
+    local encoded
+    encoded="$(printf '%s' "$1" | python3 -I -c '
+import sys
+import urllib.parse
+
+text = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+text = "".join(" " if ord(char) < 32 or 127 <= ord(char) <= 159 else char for char in text)
+sys.stdout.write(urllib.parse.quote(text[:1024], safe="-._~"))
+')" || encoded=""
+    printf '%s' "$encoded"
+    return 0
+}
+pushover_form_body() {
+    local message="${SUMMARY_BODY:-Update run failed}" priority="${PUSHOVER_PRIORITY:-0}"
+    printf 'token=%s&user=%s&message=%s&priority=%s' "$(urlencode "$PUSHOVER_TOKEN")" \
+        "$(urlencode "$PUSHOVER_USER")" "$(pushover_message_encode "$message")" "$priority"
+    if [[ "$priority" == 2 ]]; then
+        printf '&retry=%s&expire=%s' "${PUSHOVER_RETRY:-60}" "${PUSHOVER_EXPIRE:-3600}"
+    fi
+    return 0
+}
+pushover_send() {
+    local tmp cfg response code
+    if [[ ! "${PUSHOVER_PRIORITY:-0}" =~ ^(0|2)$ ]] ||
+       { [[ "${PUSHOVER_PRIORITY:-0}" == 2 ]] && [[ ! "${PUSHOVER_RETRY:-}" =~ ^[1-9][0-9]*$ || ! "${PUSHOVER_EXPIRE:-}" =~ ^[1-9][0-9]*$ ]]; }; then
+        log "WARNING: invalid Pushover priority/retry/expire settings"
+        record_result Pushover false
+        return
+    fi
+    make_temp; tmp="$MAKE_TEMP_RESULT"; pushover_form_body > "$tmp"
+    make_curl_config 'https://api.pushover.net/1/messages.json'; cfg="$MAKE_TEMP_RESULT"
+    [[ "$DRY_RUN" == true ]] && { log "DRY_RUN: would send notification to Pushover"; return; }
+    response="$(curl -sS -w '\n%{http_code}' --proto '=https' --tlsv1.2 --max-time 15 \
+        -H 'Content-Type: application/x-www-form-urlencoded' --data-binary @"$tmp" -K "$cfg" 2>/dev/null || printf '\n000')"
+    code="$(printf '%s' "$response" | tail -n1 | tr -cd 0-9)"
+    if [[ "${code:-0}" -ge 200 && "${code:-0}" -lt 300 ]]; then record_result Pushover true
+    else log "WARNING: Pushover delivery failed (HTTP ${code:-0}); not retrying"; record_result Pushover false; fi
+}
+
+backend_healthcheck() { healthcheck_enabled && healthcheck_send || true; }
+backend_discord() { [[ -n "${DISCORD_WEBHOOK:-}" ]] && notify_discord "$DISCORD_WEBHOOK" || true; }
+backend_slack() { [[ -n "${SLACK_WEBHOOK:-}" ]] && notify_slack "$SLACK_WEBHOOK" || true; }
+backend_teams() { [[ -n "${TEAMS_WEBHOOK:-}" ]] && notify_teams "$TEAMS_WEBHOOK" || true; }
+backend_ntfy() { [[ -n "${NTFY_URL:-}" ]] && notify_ntfy "$NTFY_URL" || true; }
+backend_gotify() { [[ -n "${GOTIFY_URL:-}" ]] && notify_gotify "$GOTIFY_URL" || true; }
+backend_webhook() { [[ -n "${GENERIC_WEBHOOK_URL:-}" ]] && notify_webhook_generic "$GENERIC_WEBHOOK_URL" || true; }
+backend_matrix_webhook() { [[ "${MATRIX_MODE:-none}" == webhook ]] && notify_matrix_webhook "$MATRIX_WEBHOOK" || true; }
+backend_matrix_api() { [[ "${MATRIX_MODE:-none}" == api ]] && notify_matrix_api || true; }
+backend_pushover() { pushover_enabled && pushover_send || true; }
+
+register_backend backend_healthcheck
+register_backend backend_discord
+register_backend backend_slack
+register_backend backend_teams
+register_backend backend_ntfy
+register_backend backend_gotify
+register_backend backend_webhook
+register_backend backend_matrix_webhook
+register_backend backend_matrix_api
+register_backend backend_pushover
 
 # ---------------------------------------------------------------------------
 # Platform senders
@@ -722,7 +825,7 @@ matrix_logout() {
 }
 
 urlencode() {
-    local s="$1" out="" c i
+    local LC_ALL=C s="$1" out="" c i
     for ((i = 0; i < ${#s}; i++)); do
         c="${s:i:1}"
         case "$c" in
@@ -861,7 +964,8 @@ load_secrets() {
     local key
     for key in SECRET_MODE DISCORD_WEBHOOK TEAMS_WEBHOOK SLACK_WEBHOOK \
         MATRIX_WEBHOOK MATRIX_HOMESERVER MATRIX_USERNAME MATRIX_PASSWORD MATRIX_ROOM_ID MATRIX_ACCESS_TOKEN \
-        NTFY_URL NTFY_TOPIC NTFY_TOKEN NTFY_PRIORITY GOTIFY_URL GOTIFY_TOKEN GOTIFY_PRIORITY GENERIC_WEBHOOK_URL; do
+        NTFY_URL NTFY_TOPIC NTFY_TOKEN NTFY_PRIORITY GOTIFY_URL GOTIFY_TOKEN GOTIFY_PRIORITY GENERIC_WEBHOOK_URL \
+        HEALTHCHECK_PING_URL PUSHOVER_TOKEN PUSHOVER_USER PUSHOVER_PRIORITY PUSHOVER_RETRY PUSHOVER_EXPIRE; do
         [[ -v "$key" ]] && env_values["$key"]="${!key}"
     done
     # All notification variables start empty so `set -u` can never fire on them.
@@ -871,6 +975,8 @@ load_secrets() {
     NTFY_URL=""; NTFY_TOPIC=""; NTFY_TOKEN=""; NTFY_PRIORITY=3
     GOTIFY_URL=""; GOTIFY_TOKEN=""; GOTIFY_PRIORITY=5
     GENERIC_WEBHOOK_URL=""
+    HEALTHCHECK_PING_URL=""; PUSHOVER_TOKEN=""; PUSHOVER_USER=""
+    PUSHOVER_PRIORITY=0; PUSHOVER_RETRY=60; PUSHOVER_EXPIRE=3600
 
     # Read the root-only environment file directly so that running the script
     # by hand behaves the same as the systemd unit. Parsed as KEY=VALUE rather
@@ -895,7 +1001,7 @@ load_secrets() {
 
     if [[ -f "$SECRETS_FILE" ]] && file_is_safe "$SECRETS_FILE"; then
         parse_kv_file "$SECRETS_FILE" \
-            '^(SECRET_MODE|DISCORD_WEBHOOK|SLACK_WEBHOOK|TEAMS_WEBHOOK|MATRIX_WEBHOOK|MATRIX_HOMESERVER|MATRIX_USERNAME|MATRIX_PASSWORD|MATRIX_ACCESS_TOKEN|MATRIX_ROOM_ID|NTFY_URL|NTFY_TOPIC|NTFY_TOKEN|NTFY_PRIORITY|GOTIFY_URL|GOTIFY_TOKEN|GOTIFY_PRIORITY|GENERIC_WEBHOOK_URL)$'
+            '^(SECRET_MODE|DISCORD_WEBHOOK|SLACK_WEBHOOK|TEAMS_WEBHOOK|MATRIX_WEBHOOK|MATRIX_HOMESERVER|MATRIX_USERNAME|MATRIX_PASSWORD|MATRIX_ACCESS_TOKEN|MATRIX_ROOM_ID|NTFY_URL|NTFY_TOPIC|NTFY_TOKEN|NTFY_PRIORITY|GOTIFY_URL|GOTIFY_TOKEN|GOTIFY_PRIORITY|GENERIC_WEBHOOK_URL|HEALTHCHECK_PING_URL|PUSHOVER_TOKEN|PUSHOVER_USER|PUSHOVER_PRIORITY|PUSHOVER_RETRY|PUSHOVER_EXPIRE)$'
         SECRET_MODE="local"
     fi
 
@@ -903,7 +1009,7 @@ load_secrets() {
     for key in "${!env_values[@]}"; do
         printf -v "$key" '%s' "${env_values[$key]}"
     done
-    if [[ -z "${SECRET_MODE:-}" ]] && [[ -n "$DISCORD_WEBHOOK$TEAMS_WEBHOOK$SLACK_WEBHOOK$MATRIX_WEBHOOK$MATRIX_HOMESERVER$NTFY_URL$GOTIFY_URL$GENERIC_WEBHOOK_URL" ]]; then
+    if [[ -z "${SECRET_MODE:-}" ]] && [[ -n "$DISCORD_WEBHOOK$TEAMS_WEBHOOK$SLACK_WEBHOOK$MATRIX_WEBHOOK$MATRIX_HOMESERVER$NTFY_URL$GOTIFY_URL$GENERIC_WEBHOOK_URL$HEALTHCHECK_PING_URL$PUSHOVER_TOKEN" ]]; then
         SECRET_MODE="local"
     fi
 
@@ -945,6 +1051,9 @@ load_secrets() {
     GOTIFY_URL="$(doppler_get "${DOPPLER_GOTIFY_URL_SECRET:-UPDATE_NOTIFIER_GOTIFY_URL}")"
     GOTIFY_TOKEN="$(doppler_get "${DOPPLER_GOTIFY_TOKEN_SECRET:-UPDATE_NOTIFIER_GOTIFY_TOKEN}")"
     GENERIC_WEBHOOK_URL="$(doppler_get "${DOPPLER_WEBHOOK_SECRET:-UPDATE_NOTIFIER_WEBHOOK_URL}")"
+    HEALTHCHECK_PING_URL="$(doppler_get "${DOPPLER_HEALTHCHECK_SECRET:-UPDATE_NOTIFIER_HEALTHCHECK_PING_URL}")"
+    PUSHOVER_TOKEN="$(doppler_get "${DOPPLER_PUSHOVER_TOKEN_SECRET:-UPDATE_NOTIFIER_PUSHOVER_TOKEN}")"
+    PUSHOVER_USER="$(doppler_get "${DOPPLER_PUSHOVER_USER_SECRET:-UPDATE_NOTIFIER_PUSHOVER_USER}")"
     return 0
 }
 
@@ -960,16 +1069,50 @@ validate_environment() {
 }
 
 write_state() {
+    local now previous_success=0 reboot=0
+    now="$(date +%s)"
+    if [[ -r "$STATE_DIR/state" ]]; then
+        previous_success="$(sed -n 's/^last_success_epoch=\([0-9][0-9]*\)$/\1/p' "$STATE_DIR/state" | tail -n1)"
+        previous_success="${previous_success:-0}"
+    fi
+    [[ "$UPDATE_STATUS" == updated || "$UPDATE_STATUS" == no-updates ]] && previous_success="$now"
+    [[ -e "${PATCH_GREMLIN_REBOOT_REQUIRED_FILE:-/var/run/reboot-required}" ]] && reboot=1
     mkdir -p "$STATE_DIR" 2>/dev/null || return 0
     cat > "$STATE_DIR/state" 2>/dev/null <<EOF || true
-last_run_epoch=$(date +%s)
+last_run_epoch=$now
+last_success_epoch=$previous_success
 last_status=$UPDATE_STATUS
 upgraded_count=${UPGRADED_COUNT:-0}
 pending_total=${PENDING_TOTAL:-0}
 pending_security=${PENDING_SECURITY:-0}
+held_back_count=${HELD_BACK_COUNT:-0}
+reboot_required=$reboot
 notification_sent=${NOTIFICATION_SENT}
 version=$PATCH_GREMLIN_VERSION
 EOF
+    chmod 600 "$STATE_DIR/state" 2>/dev/null || true
+}
+
+event_json() {
+    printf '{"schema":1,"timestamp":"%s","host":"%s","status":"%s","upgraded_count":%s,"security_count":%s,"held_back_count":%s,"reboot_required":%s,"duration":%s,"run_id":"%s"}' \
+        "$(json_escape "${LAST_RUN_UTC:-}")" "$(json_escape "${HOST_NAME:-unknown}")" "$(json_escape "${UPDATE_STATUS:-unknown}")" \
+        "${UPGRADED_COUNT:-0}" "${PENDING_SECURITY:-0}" "${HELD_BACK_COUNT:-0}" "${REBOOT_REQUIRED:-0}" \
+        "${RUN_DURATION:-0}" "$(json_escape "${RUN_ID:-unknown}")"
+}
+
+write_event() {
+    [[ -n "$EVENTS_FILE" && "$DRY_RUN" != true ]] || return 0
+    local dir line
+    dir="$(dirname "$EVENTS_FILE")"; mkdir -p "$dir" 2>/dev/null || { log "WARNING: cannot create SIEM events directory"; return 0; }
+    if [[ -f "$EVENTS_FILE" ]] && (( $(stat -c '%s' "$EVENTS_FILE" 2>/dev/null || echo 0) >= EVENTS_MAX_BYTES )); then
+        mv -f "$EVENTS_FILE" "$EVENTS_FILE.1" 2>/dev/null || true
+    fi
+    line="$(event_json)"; printf '%s\n' "$line" >> "$EVENTS_FILE" 2>/dev/null || { log "WARNING: cannot append SIEM event"; return 0; }
+    chmod 600 "$EVENTS_FILE" 2>/dev/null || true
+    local log_host log_rid
+    log_host="${HOST_NAME:-unknown}"; log_host="${log_host//[^A-Za-z0-9._-]/_}"
+    log_rid="${RUN_ID:-unknown}"; log_rid="${log_rid//[^A-Za-z0-9._-]/_}"
+    logger -t patch-gremlin "schema=1 timestamp=${LAST_RUN_UTC:-} host=$log_host status=${UPDATE_STATUS:-unknown} upgraded_count=${UPGRADED_COUNT:-0} security_count=${PENDING_SECURITY:-0} held_back_count=${HELD_BACK_COUNT:-0} reboot_required=${REBOOT_REQUIRED:-0} duration=${RUN_DURATION:-0} run_id=$log_rid" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
@@ -988,6 +1131,8 @@ DOPPLER_SLACK_SECRET="${DOPPLER_SLACK_SECRET:-UPDATE_NOTIFIER_SLACK_WEBHOOK}"
 # main
 # ---------------------------------------------------------------------------
 main() {
+    local RUN_STARTED
+    RUN_STARTED="$(date +%s)"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help)    usage; exit 0 ;;
@@ -1021,6 +1166,7 @@ main() {
     HOST_NAME="$(resolve_hostname)"
     LAST_RUN="$(date '+%Y-%m-%d %H:%M:%S %Z')"
     LAST_RUN_UTC="$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')"
+    RUN_ID="${PATCH_GREMLIN_RUN_ID:-$(date +%s)-$$}"
 
     if ! load_secrets; then
         exit 1
@@ -1033,8 +1179,14 @@ main() {
          { [[ -n "$MATRIX_ACCESS_TOKEN" ]] || [[ -n "$MATRIX_USERNAME" && -n "$MATRIX_PASSWORD" ]]; }; then
         matrix_mode="api"
     fi
+    MATRIX_MODE="$matrix_mode"
+    HEALTHCHECK_STARTED=false
+    if healthcheck_enabled; then
+        healthcheck_ping start "" || true
+        HEALTHCHECK_STARTED=true
+    fi
 
-    if [[ -z "$DISCORD_WEBHOOK$TEAMS_WEBHOOK$SLACK_WEBHOOK$NTFY_URL$GOTIFY_URL$GENERIC_WEBHOOK_URL" ]] &&
+    if [[ -z "$DISCORD_WEBHOOK$TEAMS_WEBHOOK$SLACK_WEBHOOK$NTFY_URL$GOTIFY_URL$GENERIC_WEBHOOK_URL$HEALTHCHECK_PING_URL$PUSHOVER_TOKEN" ]] &&
        [[ "$matrix_mode" == "none" ]]; then
         log "ERROR: No notification methods configured."
         if [[ "${SECRET_MODE:-doppler}" == "local" ]]; then
@@ -1088,16 +1240,18 @@ main() {
     NOTIFICATION_SENT=false
     ERRORS=""
 
-    [[ -n "$DISCORD_WEBHOOK" ]]        && notify_discord "$DISCORD_WEBHOOK"
-    [[ -n "$SLACK_WEBHOOK" ]]          && notify_slack "$SLACK_WEBHOOK"
-    [[ -n "$TEAMS_WEBHOOK" ]]          && notify_teams "$TEAMS_WEBHOOK"
-    [[ -n "$NTFY_URL" ]]               && notify_ntfy "$NTFY_URL"
-    [[ -n "$GOTIFY_URL" ]]             && notify_gotify "$GOTIFY_URL"
-    [[ -n "$GENERIC_WEBHOOK_URL" ]]    && notify_webhook_generic "$GENERIC_WEBHOOK_URL"
-    [[ "$matrix_mode" == "webhook" ]]  && notify_matrix_webhook "$MATRIX_WEBHOOK"
-    [[ "$matrix_mode" == "api" ]]      && notify_matrix_api
+    dispatch_backends
 
     [[ "$DRY_RUN" == "true" ]] || write_state
+    RUN_DURATION=$(( $(date +%s) - RUN_STARTED ))
+    HELD_BACK_COUNT="${HELD_BACK_COUNT:-0}"
+    REBOOT_REQUIRED=0; [[ -e "${PATCH_GREMLIN_REBOOT_REQUIRED_FILE:-/var/run/reboot-required}" ]] && REBOOT_REQUIRED=1
+    write_event
+    if healthcheck_enabled; then
+        if [[ "$UPDATE_STATUS" == error ]]; then healthcheck_ping fail "${SUMMARY_BODY:-update run failed}" || true
+        else healthcheck_ping success "" || true
+        fi
+    fi
 
     if [[ "$DRY_RUN" == "true" ]]; then
         log "DRY_RUN: notification simulation complete"

@@ -1,0 +1,4 @@
+Inst openssl [3.0.0] (3.0.1 Debian-Security:stable-security [amd64])
+Inst pve-manager [9.0] (9.1 Proxmox:pve-no-subscription [amd64])
+Inst curl [8.0] (8.1 Debian:stable [amd64])
+The following packages have been kept back: linux-image-amd64

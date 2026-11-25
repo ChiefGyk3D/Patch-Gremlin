@@ -97,6 +97,11 @@ Configuration environment variables (all optional in interactive mode):
                                      (default: false)
   ENABLE_HEARTBEAT=true|false        Also send a scheduled report even when
                                      no upgrade ran (default: false)
+  ENABLE_PROMETHEUS=true|false       Install and enable textfile timer (default: false)
+  PROMETHEUS_TEXTFILE_DIR=PATH       node_exporter textfile directory
+  ENABLE_EVENTS=true|false           Append SIEM JSONL events (default: false)
+  EVENTS_FILE=PATH                   JSONL path (default: /var/log/patch-gremlin/events.jsonl)
+  EVENTS_MAX_BYTES=BYTES             Rotate threshold (default: 1048576)
   SECRET_MODE=doppler|local          Where secrets live
   DOPPLER_TOKEN=dp.st....            Required for doppler mode
 
@@ -106,6 +111,7 @@ Local-mode secrets (used with SECRET_MODE=local):
   LOCAL_MATRIX_PASSWORD, LOCAL_MATRIX_ACCESS_TOKEN, LOCAL_MATRIX_ROOM_ID,
   LOCAL_NTFY_URL, LOCAL_NTFY_TOPIC, LOCAL_NTFY_TOKEN,
   LOCAL_GOTIFY_URL, LOCAL_GOTIFY_TOKEN, LOCAL_WEBHOOK_URL
+  LOCAL_HEALTHCHECK_PING_URL, LOCAL_PUSHOVER_TOKEN, LOCAL_PUSHOVER_USER
 
 Example (fully unattended):
   sudo -E env UPDATE_TYPE=security UPDATE_SCHEDULE=daily UPDATE_TIME=03:30 \\
@@ -169,7 +175,7 @@ time_plus_minutes() {
 # executed as root. This parses KEY=VALUE against an allowlist and never
 # evaluates the file.
 # ---------------------------------------------------------------------------
-CONFIG_ALLOWLIST='^(DOPPLER_(DISCORD|TEAMS|SLACK|MATRIX|MATRIX_HOMESERVER|MATRIX_USERNAME|MATRIX_PASSWORD|MATRIX_ROOM_ID|MATRIX_TOKEN|NTFY_URL|NTFY_TOPIC|NTFY_TOKEN|GOTIFY_URL|GOTIFY_TOKEN|WEBHOOK)_SECRET)$'
+CONFIG_ALLOWLIST='^(DOPPLER_(DISCORD|TEAMS|SLACK|MATRIX|MATRIX_HOMESERVER|MATRIX_USERNAME|MATRIX_PASSWORD|MATRIX_ROOM_ID|MATRIX_TOKEN|NTFY_URL|NTFY_TOPIC|NTFY_TOKEN|GOTIFY_URL|GOTIFY_TOKEN|WEBHOOK|HEALTHCHECK|PUSHOVER_TOKEN|PUSHOVER_USER)_SECRET|ENABLE_PROMETHEUS|PROMETHEUS_TEXTFILE_DIR|ENABLE_EVENTS|EVENTS_FILE|EVENTS_MAX_BYTES)$'
 
 load_config_file() {
     local config_file="$1" line key value skipped=0 loaded=0
@@ -519,6 +525,12 @@ install_secrets() {
             GOTIFY_URL:LOCAL_GOTIFY_URL
             GOTIFY_TOKEN:LOCAL_GOTIFY_TOKEN
             GENERIC_WEBHOOK_URL:LOCAL_WEBHOOK_URL
+            HEALTHCHECK_PING_URL:LOCAL_HEALTHCHECK_PING_URL
+            PUSHOVER_TOKEN:LOCAL_PUSHOVER_TOKEN
+            PUSHOVER_USER:LOCAL_PUSHOVER_USER
+            PUSHOVER_PRIORITY:LOCAL_PUSHOVER_PRIORITY
+            PUSHOVER_RETRY:LOCAL_PUSHOVER_RETRY
+            PUSHOVER_EXPIRE:LOCAL_PUSHOVER_EXPIRE
         )
         local pair out src val
         out="# Patch Gremlin local secrets. Mode 600, root-owned."$'\n'
@@ -534,6 +546,8 @@ install_secrets() {
         # Nothing sensitive in the unit file itself.
         write_file /etc/update-notifier/env 600 <<EOF
 SECRET_MODE=local
+PATCH_GREMLIN_EVENTS_FILE=$([[ "$ENABLE_EVENTS" == true ]] && printf '%s' "$EVENTS_FILE")
+PATCH_GREMLIN_EVENTS_MAX_BYTES=${EVENTS_MAX_BYTES}
 EOF
     else
         # The Doppler token used to be embedded in the systemd unit AND in
@@ -545,7 +559,8 @@ EOF
                  DOPPLER_MATRIX_SECRET DOPPLER_MATRIX_HOMESERVER_SECRET DOPPLER_MATRIX_USERNAME_SECRET \
                  DOPPLER_MATRIX_PASSWORD_SECRET DOPPLER_MATRIX_ROOM_ID_SECRET DOPPLER_MATRIX_TOKEN_SECRET \
                  DOPPLER_NTFY_URL_SECRET DOPPLER_NTFY_TOPIC_SECRET DOPPLER_NTFY_TOKEN_SECRET \
-                 DOPPLER_GOTIFY_URL_SECRET DOPPLER_GOTIFY_TOKEN_SECRET DOPPLER_WEBHOOK_SECRET; do
+                 DOPPLER_GOTIFY_URL_SECRET DOPPLER_GOTIFY_TOKEN_SECRET DOPPLER_WEBHOOK_SECRET \
+                 DOPPLER_HEALTHCHECK_SECRET DOPPLER_PUSHOVER_TOKEN_SECRET DOPPLER_PUSHOVER_USER_SECRET; do
             reject_control_chars "$v" "${!v:-}"
         done
         write_file /etc/update-notifier/env 600 <<EOF
@@ -566,6 +581,11 @@ DOPPLER_NTFY_TOKEN_SECRET=${DOPPLER_NTFY_TOKEN_SECRET}
 DOPPLER_GOTIFY_URL_SECRET=${DOPPLER_GOTIFY_URL_SECRET}
 DOPPLER_GOTIFY_TOKEN_SECRET=${DOPPLER_GOTIFY_TOKEN_SECRET}
 DOPPLER_WEBHOOK_SECRET=${DOPPLER_WEBHOOK_SECRET}
+DOPPLER_HEALTHCHECK_SECRET=${DOPPLER_HEALTHCHECK_SECRET}
+DOPPLER_PUSHOVER_TOKEN_SECRET=${DOPPLER_PUSHOVER_TOKEN_SECRET}
+DOPPLER_PUSHOVER_USER_SECRET=${DOPPLER_PUSHOVER_USER_SECRET}
+PATCH_GREMLIN_EVENTS_FILE=$([[ "$ENABLE_EVENTS" == true ]] && printf '%s' "$EVENTS_FILE")
+PATCH_GREMLIN_EVENTS_MAX_BYTES=${EVENTS_MAX_BYTES}
 EOF
         ok "Wrote /etc/update-notifier/env (mode 600, root only)"
     fi
@@ -585,6 +605,9 @@ install_scripts() {
     if [[ -f "$SCRIPT_DIR/health-check.sh" ]]; then
         install -m 755 "$SCRIPT_DIR/health-check.sh" "$(p /usr/local/bin/patch-gremlin-health-check.sh)"
         ok "Installed /usr/local/bin/patch-gremlin-health-check.sh"
+    fi
+    if [[ "${ENABLE_PROMETHEUS:-false}" == true && -f "$SCRIPT_DIR/monitoring/prometheus-textfile.sh" ]]; then
+        install -m 755 "$SCRIPT_DIR/monitoring/prometheus-textfile.sh" "$(p /usr/local/bin/patch-gremlin-prometheus-textfile.sh)"
     fi
     mkdir -p "$(p /var/lib/patch-gremlin)"
 }
@@ -619,7 +642,7 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictNamespaces=true
 LockPersonality=true
-ReadWritePaths=/var/lib/patch-gremlin /run
+ReadWritePaths=/var/lib/patch-gremlin /run$([[ "$ENABLE_EVENTS" == true ]] && printf ' %s' "$(dirname "$EVENTS_FILE")")
 EOF
     ok "Installed update-notifier.service"
 
@@ -666,6 +689,30 @@ EOF
     else
         run_systemctl disable update-notifier.timer 2>/dev/null || true
         ok "Heartbeat timer installed but disabled (set ENABLE_HEARTBEAT=true to enable)"
+    fi
+
+    if [[ "${ENABLE_PROMETHEUS:-false}" == true ]]; then
+        write_file /etc/systemd/system/patch-gremlin-prometheus.service 644 <<EOF
+[Service]
+Type=oneshot
+Environment=PATCH_GREMLIN_TEXTFILE_DIR=${PROMETHEUS_TEXTFILE_DIR}
+ExecStart=/usr/local/bin/patch-gremlin-prometheus-textfile.sh
+User=root
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=${PROMETHEUS_TEXTFILE_DIR}
+EOF
+        write_file /etc/systemd/system/patch-gremlin-prometheus.timer 644 <<'EOF'
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+        run_systemctl enable --now patch-gremlin-prometheus.timer
     fi
 }
 
@@ -725,6 +772,11 @@ gather_settings() {
     AUTO_REBOOT="${AUTO_REBOOT:-false}"
     REBOOT_WITH_USERS="${REBOOT_WITH_USERS:-false}"
     ENABLE_HEARTBEAT="${ENABLE_HEARTBEAT:-false}"
+    ENABLE_PROMETHEUS="${ENABLE_PROMETHEUS:-false}"
+    PROMETHEUS_TEXTFILE_DIR="${PROMETHEUS_TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
+    ENABLE_EVENTS="${ENABLE_EVENTS:-false}"
+    EVENTS_FILE="${EVENTS_FILE:-/var/log/patch-gremlin/events.jsonl}"
+    EVENTS_MAX_BYTES="${EVENTS_MAX_BYTES:-1048576}"
     SECRET_MODE="${SECRET_MODE:-}"
 
     if [[ -z "$UPDATE_TYPE" ]]; then
@@ -765,6 +817,9 @@ gather_settings() {
     [[ "$AUTO_REBOOT" =~ ^(true|false)$ ]] || die "AUTO_REBOOT must be true or false"
     [[ "$REBOOT_WITH_USERS" =~ ^(true|false)$ ]] || die "REBOOT_WITH_USERS must be true or false"
     [[ "$ENABLE_HEARTBEAT" =~ ^(true|false)$ ]] || die "ENABLE_HEARTBEAT must be true or false"
+    [[ "$ENABLE_PROMETHEUS" =~ ^(true|false)$ ]] || die "ENABLE_PROMETHEUS must be true or false"
+    [[ "$ENABLE_EVENTS" =~ ^(true|false)$ ]] || die "ENABLE_EVENTS must be true or false"
+    [[ "$EVENTS_MAX_BYTES" =~ ^[1-9][0-9]*$ ]] || die "EVENTS_MAX_BYTES must be a positive integer"
 
     if [[ -z "$SECRET_MODE" ]]; then
         say "\n${YELLOW}Secret storage:${NC}\n  1) Doppler\n  2) Local file (/etc/update-notifier/secrets.conf)"
@@ -810,10 +865,19 @@ gather_local_secrets() {
     LOCAL_GOTIFY_URL="${LOCAL_GOTIFY_URL:-}"
     LOCAL_GOTIFY_TOKEN="${LOCAL_GOTIFY_TOKEN:-}"
     LOCAL_WEBHOOK_URL="${LOCAL_WEBHOOK_URL:-}"
+    LOCAL_HEALTHCHECK_PING_URL="${LOCAL_HEALTHCHECK_PING_URL:-}"
+    LOCAL_PUSHOVER_TOKEN="${LOCAL_PUSHOVER_TOKEN:-}"
+    LOCAL_PUSHOVER_USER="${LOCAL_PUSHOVER_USER:-}"
+    LOCAL_PUSHOVER_PRIORITY="${LOCAL_PUSHOVER_PRIORITY:-0}"
+    LOCAL_PUSHOVER_RETRY="${LOCAL_PUSHOVER_RETRY:-60}"
+    LOCAL_PUSHOVER_EXPIRE="${LOCAL_PUSHOVER_EXPIRE:-3600}"
+    [[ -z "$LOCAL_HEALTHCHECK_PING_URL" || "$LOCAL_HEALTHCHECK_PING_URL" =~ ^https:// ]] || die "LOCAL_HEALTHCHECK_PING_URL must use HTTPS"
+    [[ -z "$LOCAL_PUSHOVER_TOKEN" && -z "$LOCAL_PUSHOVER_USER" ]] || [[ -n "$LOCAL_PUSHOVER_TOKEN" && -n "$LOCAL_PUSHOVER_USER" ]] || die "Pushover requires both LOCAL_PUSHOVER_TOKEN and LOCAL_PUSHOVER_USER"
+    [[ "$LOCAL_PUSHOVER_PRIORITY" =~ ^(0|2)$ ]] || die "LOCAL_PUSHOVER_PRIORITY must be 0 or 2"
 
     [[ "$SECRET_MODE" == "local" ]] || return 0
 
-    local configured="${LOCAL_DISCORD_WEBHOOK}${LOCAL_SLACK_WEBHOOK}${LOCAL_TEAMS_WEBHOOK}${LOCAL_MATRIX_WEBHOOK}${LOCAL_MATRIX_HOMESERVER}${LOCAL_NTFY_URL}${LOCAL_GOTIFY_URL}${LOCAL_WEBHOOK_URL}"
+    local configured="${LOCAL_DISCORD_WEBHOOK}${LOCAL_SLACK_WEBHOOK}${LOCAL_TEAMS_WEBHOOK}${LOCAL_MATRIX_WEBHOOK}${LOCAL_MATRIX_HOMESERVER}${LOCAL_NTFY_URL}${LOCAL_GOTIFY_URL}${LOCAL_WEBHOOK_URL}${LOCAL_HEALTHCHECK_PING_URL}${LOCAL_PUSHOVER_TOKEN}"
     if [[ -n "$configured" ]]; then
         ok "Using notification endpoints from the environment"
         return 0
@@ -845,7 +909,7 @@ gather_local_secrets() {
            prompt LOCAL_MATRIX_ROOM_ID "Room ID (!room:server): " "" ;;
     esac
 
-    configured="${LOCAL_DISCORD_WEBHOOK}${LOCAL_SLACK_WEBHOOK}${LOCAL_TEAMS_WEBHOOK}${LOCAL_MATRIX_WEBHOOK}${LOCAL_MATRIX_HOMESERVER}${LOCAL_NTFY_URL}${LOCAL_GOTIFY_URL}${LOCAL_WEBHOOK_URL}"
+    configured="${LOCAL_DISCORD_WEBHOOK}${LOCAL_SLACK_WEBHOOK}${LOCAL_TEAMS_WEBHOOK}${LOCAL_MATRIX_WEBHOOK}${LOCAL_MATRIX_HOMESERVER}${LOCAL_NTFY_URL}${LOCAL_GOTIFY_URL}${LOCAL_WEBHOOK_URL}${LOCAL_HEALTHCHECK_PING_URL}${LOCAL_PUSHOVER_TOKEN}"
     [[ -n "$configured" ]] || die "At least one notification method must be configured"
     ok "Notification endpoints collected"
 }
@@ -962,6 +1026,9 @@ main() {
     DOPPLER_GOTIFY_URL_SECRET="${DOPPLER_GOTIFY_URL_SECRET:-UPDATE_NOTIFIER_GOTIFY_URL}"
     DOPPLER_GOTIFY_TOKEN_SECRET="${DOPPLER_GOTIFY_TOKEN_SECRET:-UPDATE_NOTIFIER_GOTIFY_TOKEN}"
     DOPPLER_WEBHOOK_SECRET="${DOPPLER_WEBHOOK_SECRET:-UPDATE_NOTIFIER_WEBHOOK_URL}"
+    DOPPLER_HEALTHCHECK_SECRET="${DOPPLER_HEALTHCHECK_SECRET:-UPDATE_NOTIFIER_HEALTHCHECK_PING_URL}"
+    DOPPLER_PUSHOVER_TOKEN_SECRET="${DOPPLER_PUSHOVER_TOKEN_SECRET:-UPDATE_NOTIFIER_PUSHOVER_TOKEN}"
+    DOPPLER_PUSHOVER_USER_SECRET="${DOPPLER_PUSHOVER_USER_SECRET:-UPDATE_NOTIFIER_PUSHOVER_USER}"
 
     # --update-only refreshes scripts AND units/hooks. The old option 2 copied
     # only update-notifier.sh, so a version that changed the unit layout left
