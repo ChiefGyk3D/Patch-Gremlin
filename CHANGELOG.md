@@ -48,7 +48,7 @@ the new secret layout and trigger wiring are applied.
   Command substitution in that file no longer works — see `config.example.sh`.
 - `Unattended-Upgrade::Automatic-Reboot-WithUsers` now defaults to `false`.
 
-### Fixed
+### Correctness fixes
 
 - **Package detection never worked on real Debian logs.** unattended-upgrades
   writes the package list on the same line as the marker; the parser skipped

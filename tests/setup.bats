@@ -278,8 +278,11 @@ EOF
 @test "setup: notification hangs off the upgrade unit, not a racing timer" {
     default_install
     [ "$status" -eq 0 ]
-    grep -q 'ExecStartPost=-/usr/bin/systemctl start --no-block update-notifier.service' \
-        "$ROOTDIR/etc/systemd/system/apt-daily-upgrade.service.d/patch-gremlin.conf"
+    drop_in="$ROOTDIR/etc/systemd/system/apt-daily-upgrade.service.d/patch-gremlin.conf"
+    [ -f "$drop_in" ]
+    [ "$(stat -c '%a' "$drop_in")" = "644" ]
+    grep -Fxq 'ExecStartPost=-/usr/bin/systemctl start --no-block update-notifier.service' "$drop_in"
+    ! grep -Fq 'ExecStartPost=-/usr/local/bin/update-notifier.sh' "$drop_in"
 }
 
 @test "setup: writes no Dpkg::Post-Invoke hook" {
@@ -459,12 +462,14 @@ default_rhel_install() {
 @test "setup(rhel): notification hangs off dnf-automatic.service" {
     default_rhel_install
     [ "$status" -eq 0 ]
-    grep -q 'ExecStartPost=-/usr/local/bin/update-notifier.sh' \
-        "$ROOTDIR/etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf"
+    drop_in="$ROOTDIR/etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf"
+    [ -f "$drop_in" ]
+    [ "$(stat -c '%a' "$drop_in")" = "644" ]
+    grep -Fxq 'ExecStartPost=-/usr/bin/systemctl start --no-block update-notifier.service' "$drop_in"
+    ! grep -Fq 'ExecStartPost=-/usr/local/bin/update-notifier.sh' "$drop_in"
     # and the token is NOT exported into the upgrade process.
     # Anchor the match: the file carries a comment explaining the absence.
-    ! grep -q '^EnvironmentFile=' \
-        "$ROOTDIR/etc/systemd/system/dnf-automatic.service.d/patch-gremlin.conf"
+    ! grep -q '^EnvironmentFile=' "$drop_in"
 }
 
 @test "setup(rhel): weekly schedule lands in the dnf-automatic timer override" {
@@ -526,8 +531,11 @@ default_rhel_install() {
         SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=true \
         LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc
     [ "$status" -eq 0 ]
-    grep -q 'ExecStartPost=-/usr/local/bin/update-notifier.sh' \
-        "$ROOTDIR/etc/systemd/system/dnf5-automatic.service.d/patch-gremlin.conf"
+    drop_in="$ROOTDIR/etc/systemd/system/dnf5-automatic.service.d/patch-gremlin.conf"
+    [ -f "$drop_in" ]
+    [ "$(stat -c '%a' "$drop_in")" = "644" ]
+    grep -Fxq 'ExecStartPost=-/usr/bin/systemctl start --no-block update-notifier.service' "$drop_in"
+    ! grep -Fq 'ExecStartPost=-/usr/local/bin/update-notifier.sh' "$drop_in"
     [ -f "$ROOTDIR/etc/systemd/system/dnf5-automatic.timer.d/patch-gremlin.conf" ]
     # and nothing is stranded on the unit that does not exist there
     [ ! -e "$ROOTDIR/etc/systemd/system/dnf-automatic.service.d" ]
