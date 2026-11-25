@@ -377,6 +377,107 @@ backup_file() {
     ok "Backed up $1 to /var/backups/patch-gremlin/"
 }
 
+verify_proxmox_apt_policy() {
+    local config_dir managed_name fragment name dump origins allowed bootstrap
+    config_dir="$(p /etc/apt/apt.conf.d)"
+    managed_name="99zz-patch-gremlin-proxmox"
+
+    for fragment in "$config_dir"/*; do
+        [[ -f "$fragment" ]] || continue
+        name="$(basename "$fragment")"
+        if [[ "$name" > "$managed_name" && "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            die "later APT configuration fragment '$name' would override the Proxmox policy"
+        fi
+    done
+
+    command -v apt-config >/dev/null 2>&1 || die "apt-config is required to verify the Proxmox policy"
+    mkdir -p "$(p /var/lib/patch-gremlin)"
+    bootstrap="$(mktemp "$(p /var/lib/patch-gremlin)/apt-config.XXXXXX")"
+    printf 'Dir::Etc::parts "%s";\n' "$config_dir" > "$bootstrap"
+    if ! dump="$(APT_CONFIG="$bootstrap" apt-config dump)"; then
+        rm -f -- "$bootstrap"
+        die "apt-config could not load the effective Proxmox policy"
+    fi
+    rm -f -- "$bootstrap"
+    allowed="$(printf '%s\n' "$dump" | grep -E '^Unattended-Upgrade::(Allowed-Origins|Origins-Pattern)' || true)"
+    say "Effective Proxmox unattended-upgrades policy:"
+    printf '%s\n' "$allowed"
+
+    origins="$(printf '%s\n' "$allowed" | sed -n 's/^Unattended-Upgrade::Origins-Pattern::[^ ]* "\(.*\)";$/\1/p')"
+    [[ "$origins" == $'origin=Debian,codename=${distro_codename}-security,label=Debian-Security\norigin=Debian,codename=${distro_codename}-security' ]] ||
+        die "effective unattended-upgrades origins are not limited to Debian security"
+    printf '%s\n' "$dump" | grep -Fxq 'Unattended-Upgrade::Automatic-Reboot "false";' ||
+        die "effective unattended-upgrades policy permits automatic reboot"
+    printf '%s\n' "$dump" | grep -Fxq 'APT::Get::AllowUnauthenticated "false";' ||
+        die "effective APT policy permits unauthenticated packages"
+}
+
+install_proxmox_controls() {
+    rm -f -- "$(p /etc/apt/apt.conf.d/52patch-gremlin-proxmox)"
+    write_file /etc/needrestart/conf.d/99zz-patch-gremlin-proxmox.conf 644 <<'EOF'
+# Managed by Patch Gremlin. List affected services but never restart them.
+$nrconf{restart} = 'l';
+$nrconf{override_rc}{qr(^(?:corosync|pve-cluster|pveproxy|pvedaemon|pvestatd)(?:\.service)?$)} = 0;
+EOF
+
+    write_file /usr/local/libexec/patch-gremlin-proxmox-lock 755 <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+pve_root="${PATCH_GREMLIN_PVE_ROOT:-/etc/pve}"
+lock_parent="$pve_root/priv"
+lock_dir="$lock_parent/patch-gremlin-upgrade.lock"
+stale_after=86400
+
+log_message() {
+    printf '%s\n' "$*"
+    command -v logger >/dev/null 2>&1 && logger -t patch-gremlin -- "$*" 2>/dev/null || true
+}
+
+case "${1:-}" in
+    acquire)
+        if [[ ! -f "$pve_root/corosync.conf" ]]; then
+            log_message "Proxmox node is not clustered; continuing without the cluster upgrade lock"
+            exit 0
+        fi
+        if [[ ! -d "$lock_parent" ]]; then
+            log_message "Proxmox cluster lock path is absent; continuing without the cluster upgrade lock"
+            exit 0
+        fi
+        if mkdir "$lock_dir" 2>/dev/null; then
+            date +%s > "$lock_dir/created"
+            log_message "Acquired the Proxmox cluster upgrade lock"
+            exit 0
+        fi
+        now="$(date +%s)"
+        created="$(cat "$lock_dir/created" 2>/dev/null || printf '0')"
+        [[ "$created" =~ ^[0-9]+$ ]] || created=0
+        if (( now - created > stale_after )); then
+            rm -f -- "$lock_dir/created"
+            rmdir -- "$lock_dir" 2>/dev/null || true
+            if mkdir "$lock_dir" 2>/dev/null; then
+                printf '%s\n' "$now" > "$lock_dir/created"
+                log_message "Replaced a stale Proxmox cluster upgrade lock"
+                exit 0
+            fi
+        fi
+        log_message "Skipping automatic updates because another cluster node holds the upgrade lock"
+        exit 1
+        ;;
+    release)
+        [[ -d "$lock_dir" ]] || exit 0
+        rm -f -- "$lock_dir/created"
+        rmdir -- "$lock_dir" 2>/dev/null || true
+        log_message "Released the Proxmox cluster upgrade lock"
+        ;;
+    *)
+        printf 'usage: %s acquire|release\n' "$0" >&2
+        exit 2
+        ;;
+esac
+EOF
+}
+
 # ---------------------------------------------------------------------------
 # Debian / Ubuntu
 # ---------------------------------------------------------------------------
@@ -390,7 +491,7 @@ install_debian_updates() {
     if [[ "$PROFILE" == "proxmox" ]]; then
         local reboot_time
         reboot_time="$(time_plus_minutes "$UPDATE_TIME" 60)"
-        write_file /etc/apt/apt.conf.d/52patch-gremlin-proxmox 644 <<EOF
+        write_file /etc/apt/apt.conf.d/99zz-patch-gremlin-proxmox 644 <<EOF
 // Managed by Patch Gremlin v${PATCH_GREMLIN_VERSION}.
 // Proxmox packages are intentionally excluded and remain manually updated.
 #clear Unattended-Upgrade::Allowed-Origins;
@@ -405,10 +506,13 @@ Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";
 Unattended-Upgrade::Remove-Unused-Dependencies "false";
 Unattended-Upgrade::Remove-New-Unused-Dependencies "false";
+APT::Get::AllowUnauthenticated "false";
 Unattended-Upgrade::SyslogEnable "true";
 Unattended-Upgrade::SyslogFacility "daemon";
 Unattended-Upgrade::Verbose "${VERBOSE_LOGGING}";
 EOF
+        install_proxmox_controls
+        verify_proxmox_apt_policy
     else
         backup_file /etc/apt/apt.conf.d/50unattended-upgrades
 
@@ -479,6 +583,7 @@ EOF
 OnCalendar=
 OnCalendar=$(oncalendar_expression)
 RandomizedDelaySec=$(timer_randomized_delay)
+$([[ "$PROFILE" == "proxmox" ]] && printf 'Persistent=false')
 EOF
 
     run_systemctl daemon-reload
@@ -711,11 +816,22 @@ EOF
         upgrade_unit="${AUTOMATIC_UNIT}.service"
     fi
 
-    write_file "/etc/systemd/system/${upgrade_unit}.d/patch-gremlin.conf" 644 <<EOF
+    if [[ "$PROFILE" == "proxmox" ]]; then
+        write_file "/etc/systemd/system/${upgrade_unit}.d/patch-gremlin.conf" 644 <<EOF
+# Managed by Patch Gremlin. Serialize clustered upgrades and only list restarts.
+[Service]
+Environment=NEEDRESTART_MODE=l
+ExecCondition=/usr/local/libexec/patch-gremlin-proxmox-lock acquire
+ExecStopPost=/usr/local/libexec/patch-gremlin-proxmox-lock release
+ExecStartPost=-/usr/bin/systemctl start --no-block update-notifier.service
+EOF
+    else
+        write_file "/etc/systemd/system/${upgrade_unit}.d/patch-gremlin.conf" 644 <<EOF
 # Managed by Patch Gremlin - notify once the upgrade run has finished.
 [Service]
 ExecStartPost=-/usr/bin/systemctl start --no-block update-notifier.service
 EOF
+    fi
     ok "Hooked notifications onto ${upgrade_unit}"
 
     # Optional heartbeat timer. Note there is no Requires= in [Unit]: that

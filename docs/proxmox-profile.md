@@ -7,11 +7,13 @@ update and notification layer on a Proxmox VE node.
 sudo ./setup-unattended-upgrades.sh --profile proxmox
 ```
 
-The profile writes `/etc/apt/apt.conf.d/52patch-gremlin-proxmox`. It does not
+The profile writes `/etc/apt/apt.conf.d/99zz-patch-gremlin-proxmox`. It does not
 replace the packaged `/etc/apt/apt.conf.d/50unattended-upgrades` conffile. The
-late drop-in permits Debian security origins only and explicitly does not add
-Proxmox repositories. It also disables automatic reboot, automatic dependency
-removal, and unused kernel package removal.
+final drop-in clears earlier origin lists, permits only the two explicit Debian
+security origin patterns, and explicitly disables unauthenticated packages. It
+also disables automatic reboot, automatic dependency removal, and unused
+kernel package removal. Setup fails if a lexically later APT fragment exists or
+if `apt-config dump` reports an effective origin outside those two patterns.
 
 ## Scope and update policy
 
@@ -37,7 +39,28 @@ sudo ./setup-unattended-upgrades.sh --profile proxmox \
 `--stagger-minutes` must be at least 60, and `--stagger-index` is zero-based.
 Both options are required together. The calculated time must remain within the
 same day. A configured stagger sets `RandomizedDelaySec=0`, so adjacent slots
-remain at least the requested number of minutes apart.
+remain at least the requested number of minutes apart. The profile also sets
+`Persistent=false`, so a missed slot is not replayed when a node boots.
+
+## Cluster lock and service restarts
+
+On a clustered node, `apt-daily-upgrade.service` acquires
+`/etc/pve/priv/patch-gremlin-upgrade.lock` before it starts. A lock held by
+another node skips that automatic upgrade run. Locks older than 24 hours are
+treated as stale. When `/etc/pve/corosync.conf` is absent, or the shared
+`/etc/pve/priv` path is unavailable, the check logs the condition and allows
+the upgrade to continue. This fail-open behavior keeps standalone nodes and a
+node with an unavailable cluster filesystem from being permanently blocked.
+
+INFERRED: `/etc/pve/priv` is root-only cluster configuration storage, and an
+atomic directory creation there acts as cluster-wide exclusion. The behavior
+has not been exercised on a live cluster in this repository's sandbox.
+
+The profile sets `NEEDRESTART_MODE=l` for the upgrade service and installs a
+needrestart drop-in that keeps needrestart in list-only mode. It explicitly
+excludes `corosync`, `pve-cluster`, `pveproxy`, `pvedaemon`, and `pvestatd` from
+automatic restart selection. Package maintainer scripts remain outside
+needrestart's control, so operators must still review package behavior.
 
 ## Reboot policy and metrics
 
@@ -62,8 +85,9 @@ input.
 Review the effective unattended-upgrades policy and timer:
 
 ```bash
-sudo apt-config dump | grep -E 'Unattended-Upgrade::(Origins-Pattern|Automatic-Reboot|Remove-Unused)'
+sudo apt-config dump | grep -E 'Unattended-Upgrade::(Allowed-Origins|Origins-Pattern|Automatic-Reboot|Remove-Unused)|APT::Get::AllowUnauthenticated'
 systemctl cat apt-daily-upgrade.timer
+systemctl cat apt-daily-upgrade.service
 systemctl list-timers apt-daily-upgrade.timer
 ```
 
