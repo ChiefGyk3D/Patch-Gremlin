@@ -873,6 +873,12 @@ The documentation checks are path-filtered to Markdown and are not required.
 
 If you find Patch Gremlin useful, consider supporting development:
 
+<div align="center">
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/A0A4E59UP)
+
+</div>
+
 ### Recurring Support
 
 <div align="center">
