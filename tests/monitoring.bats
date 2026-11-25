@@ -313,10 +313,78 @@ EOF
     out="$SANDBOX/textfiles"; mkdir -p "$out"
     run env PATCH_GREMLIN_STATE_DIR="$SANDBOX/missing" PATCH_GREMLIN_TEXTFILE_DIR="$out" \
         PATCH_GREMLIN_APT_SIMULATION_FILE="$FIXTURES/apt-simulation.txt" \
+        PATCH_GREMLIN_APT_POLICY_FILE="$FIXTURES/apt-policy.txt" \
         bash "$REPO_ROOT/monitoring/prometheus-textfile.sh"
     [ "$status" -eq 0 ]
     grep -Fxq 'patch_gremlin_pending_packages{kind="all"} 3' "$out/patch_gremlin.prom"
     grep -Fxq 'patch_gremlin_pending_packages{kind="security"} 1' "$out/patch_gremlin.prom"
     grep -Fxq 'patch_gremlin_pending_packages{kind="proxmox"} 1' "$out/patch_gremlin.prom"
     grep -Fxq 'patch_gremlin_held_back_packages 1' "$out/patch_gremlin.prom"
+}
+
+@test "prometheus textfile: derives candidate origins strictly from apt policy" {
+    out="$SANDBOX/textfiles"; mkdir -p "$out"
+    marker="$SANDBOX/policy-was-evaluated"
+    run env PATCH_GREMLIN_STATE_DIR="$SANDBOX/missing" PATCH_GREMLIN_TEXTFILE_DIR="$out" \
+        PATCH_GREMLIN_APT_SIMULATION_FILE="$FIXTURES/apt-simulation-policy.txt" \
+        PATCH_GREMLIN_APT_POLICY_FILE="$FIXTURES/apt-policy-proxmox.txt" \
+        PATCH_GREMLIN_TEST_MARKER="$marker" \
+        bash "$REPO_ROOT/monitoring/prometheus-textfile.sh"
+    [ "$status" -eq 0 ]
+    grep -Fxq 'patch_gremlin_pending_packages{kind="all"} 4' "$out/patch_gremlin.prom"
+    grep -Fxq 'patch_gremlin_pending_packages{kind="security"} 1' "$out/patch_gremlin.prom"
+    grep -Fxq 'patch_gremlin_pending_packages{kind="proxmox"} 1' "$out/patch_gremlin.prom"
+    grep -Fxq 'patch_gremlin_held_back_packages 2' "$out/patch_gremlin.prom"
+    [ ! -e "$marker" ]
+}
+
+@test "prometheus textfile: malformed policy never becomes a trusted origin" {
+    out="$SANDBOX/textfiles"; mkdir -p "$out"
+    policy="$SANDBOX/policy"
+    cat > "$policy" <<'EOF'
+pve-manager:
+  Candidate: 9.0.10
+  Version table:
+     9.0.10 500
+        500 http://download.proxmox.com/debian/pve trixie/pve-no-subscription amd64 Packages extra
+EOF
+    run env PATCH_GREMLIN_TEXTFILE_DIR="$out" \
+        PATCH_GREMLIN_APT_SIMULATION_FILE="$FIXTURES/apt-simulation-policy.txt" \
+        PATCH_GREMLIN_APT_POLICY_FILE="$policy" \
+        bash "$REPO_ROOT/monitoring/prometheus-textfile.sh"
+    [ "$status" -eq 0 ]
+    grep -Fxq 'patch_gremlin_pending_packages{kind="proxmox"} 0' "$out/patch_gremlin.prom"
+}
+
+@test "prometheus textfile: reboot files emit boolean signals and package count" {
+    out="$SANDBOX/textfiles"; mkdir -p "$out"
+    reboot="$SANDBOX/reboot-required"; pkgs="$SANDBOX/reboot-required.pkgs"
+    printf 'restart required\n' > "$reboot"
+    printf 'linux-image-amd64\nlibc6\n\n' > "$pkgs"
+    run env PATCH_GREMLIN_TEXTFILE_DIR="$out" \
+        PATCH_GREMLIN_APT_SIMULATION_FILE="$FIXTURES/apt-empty.txt" \
+        PATCH_GREMLIN_APT_POLICY_FILE="$FIXTURES/apt-policy-proxmox.txt" \
+        PATCH_GREMLIN_REBOOT_REQUIRED_FILE="$reboot" \
+        PATCH_GREMLIN_REBOOT_REQUIRED_PKGS_FILE="$pkgs" \
+        bash "$REPO_ROOT/monitoring/prometheus-textfile.sh"
+    [ "$status" -eq 0 ]
+    grep -Fxq 'node_reboot_required 1' "$out/patch_gremlin.prom"
+    grep -Fxq 'patch_gremlin_reboot_required 1' "$out/patch_gremlin.prom"
+    grep -Fxq 'patch_gremlin_reboot_required_packages 2' "$out/patch_gremlin.prom"
+    [ -f "$reboot" ]; [ -f "$pkgs" ]
+}
+
+@test "prometheus textfile: absent reboot files emit zero and are not created" {
+    out="$SANDBOX/textfiles"; mkdir -p "$out"
+    reboot="$SANDBOX/missing-reboot"; pkgs="$SANDBOX/missing-pkgs"
+    run env PATCH_GREMLIN_TEXTFILE_DIR="$out" \
+        PATCH_GREMLIN_APT_SIMULATION_FILE="$FIXTURES/apt-empty.txt" \
+        PATCH_GREMLIN_APT_POLICY_FILE="$FIXTURES/apt-policy-proxmox.txt" \
+        PATCH_GREMLIN_REBOOT_REQUIRED_FILE="$reboot" \
+        PATCH_GREMLIN_REBOOT_REQUIRED_PKGS_FILE="$pkgs" \
+        bash "$REPO_ROOT/monitoring/prometheus-textfile.sh"
+    [ "$status" -eq 0 ]
+    grep -Fxq 'node_reboot_required 0' "$out/patch_gremlin.prom"
+    grep -Fxq 'patch_gremlin_reboot_required_packages 0' "$out/patch_gremlin.prom"
+    [ ! -e "$reboot" ]; [ ! -e "$pkgs" ]
 }

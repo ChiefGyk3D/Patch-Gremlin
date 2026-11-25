@@ -70,6 +70,70 @@ default_install() {
     [ "$status" -eq 2 ]
 }
 
+@test "setup: proxmox profile uses a late drop-in and preserves the packaged conffile" {
+    mkdir -p "$ROOTDIR/etc/apt/apt.conf.d"
+    printf '%s\n' '// packaged sentinel' > "$ROOTDIR/etc/apt/apt.conf.d/50unattended-upgrades"
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian UPDATE_TYPE=all UPDATE_SCHEDULE=daily \
+        UPDATE_TIME=02:00 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=true \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive --profile proxmox
+    [ "$status" -eq 0 ]
+    grep -Fxq '// packaged sentinel' "$ROOTDIR/etc/apt/apt.conf.d/50unattended-upgrades"
+    config="$ROOTDIR/etc/apt/apt.conf.d/52patch-gremlin-proxmox"
+    [ -f "$config" ]
+    [ "$(stat -c '%a' "$config")" = 644 ]
+    grep -Fxq '#clear Unattended-Upgrade::Allowed-Origins;' "$config"
+    grep -Fxq '#clear Unattended-Upgrade::Origins-Pattern;' "$config"
+    grep -Fq 'origin=Debian,codename=${distro_codename}-security,label=Debian-Security' "$config"
+    ! grep -Ei 'origin=.*(proxmox|pve-(enterprise|no-subscription))' "$config"
+    grep -Fxq 'Unattended-Upgrade::Automatic-Reboot "false";' "$config"
+    grep -Fxq 'Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";' "$config"
+    grep -Fxq 'Unattended-Upgrade::Remove-Unused-Dependencies "false";' "$config"
+    grep -Fxq 'Unattended-Upgrade::Remove-New-Unused-Dependencies "false";' "$config"
+}
+
+@test "setup: proxmox profile rejects non-Debian systems" {
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=rhel UPDATE_TYPE=security UPDATE_SCHEDULE=daily \
+        UPDATE_TIME=02:00 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=false \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive --profile proxmox
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Debian"* ]]
+    [ ! -e "$ROOTDIR/etc/dnf/automatic.conf" ]
+}
+
+@test "setup: stagger offsets the timer with no random overlap" {
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian UPDATE_TYPE=security UPDATE_SCHEDULE=daily \
+        UPDATE_TIME=02:30 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=false \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive \
+        --profile proxmox --stagger-minutes 75 --stagger-index 2
+    [ "$status" -eq 0 ]
+    timer="$ROOTDIR/etc/systemd/system/apt-daily-upgrade.timer.d/patch-gremlin.conf"
+    grep -Fxq 'OnCalendar=*-*-* 05:00:00' "$timer"
+    grep -Fxq 'RandomizedDelaySec=0' "$timer"
+    grep -Fxq 'OnCalendar=*-*-* 07:00:00' "$ROOTDIR/etc/systemd/system/update-notifier.timer"
+    [ "$(stat -c '%a' "$timer")" = 644 ]
+    [ -z "$(find "$(dirname "$timer")" -name '*.tmp.*' -print -quit)" ]
+}
+
+@test "setup: stagger validates pairs, minimum spacing, and daily range" {
+    for args in '--stagger-minutes 60' '--stagger-index 1' \
+        '--stagger-minutes sixty --stagger-index 1' \
+        '--stagger-minutes 59 --stagger-index 1' \
+        '--stagger-minutes 800 --stagger-index 2'; do
+        # shellcheck disable=SC2086
+        run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+            PATCH_GREMLIN_OS_TYPE=debian bash "$REPO_ROOT/setup-unattended-upgrades.sh" \
+            --non-interactive --profile proxmox $args
+        [ "$status" -eq 2 ]
+        [[ "$output" == *"stagger"* ]]
+    done
+}
+
 # --------------------------------------------------------------------------
 # Regression: weekly preset without UPDATE_DAY
 # --------------------------------------------------------------------------

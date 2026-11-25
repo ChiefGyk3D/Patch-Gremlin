@@ -24,6 +24,9 @@ SKIP_PACKAGE_INSTALL="${PATCH_GREMLIN_SKIP_PACKAGE_INSTALL:-false}"
 [[ -n "$PG_ROOT" ]] && SKIP_PACKAGE_INSTALL=true
 
 NON_INTERACTIVE="${PATCH_GREMLIN_NON_INTERACTIVE:-false}"
+PROFILE="default"
+STAGGER_MINUTES=""
+STAGGER_INDEX=""
 
 say()  { echo -e "$*"; }
 ok()   { echo -e "  ${GREEN}✓${NC} $*"; }
@@ -35,15 +38,20 @@ p() { printf '%s%s' "$PG_ROOT" "$1"; }
 
 # Write a file, creating parents, with an explicit mode.
 write_file() {
-    local path mode
+    local path mode tmp
     path="$(p "$1")"; mode="$2"
     mkdir -p "$(dirname "$path")"
-    # Create the file private (600) before any content is written, then widen
-    # to the requested mode, so there is no window with a looser mode.
-    ( umask 077; : > "$path" )
-    chmod 600 "$path"
-    cat > "$path"
-    chmod "$mode" "$path"
+    # Populate a private sibling, set the final mode, then rename it over the
+    # destination. Readers see either the complete old file or the complete
+    # new file, never a truncated systemd or APT configuration.
+    tmp="$(mktemp "${path}.tmp.XXXXXX")"
+    chmod 600 "$tmp"
+    if ! cat > "$tmp"; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+    chmod "$mode" "$tmp"
+    mv -f -- "$tmp" "$path"
 }
 
 # Quote a value for secrets.conf: wrap in double quotes, escaping only \ and ".
@@ -82,6 +90,9 @@ Options:
   -y, --non-interactive   Never prompt; every setting must come from the
                           environment. Fails fast on anything missing.
   -u, --update-only       Refresh installed scripts and units, keep config.
+      --profile NAME      Installation profile: default or proxmox
+      --stagger-minutes N Space timer slots by N minutes (minimum: 60)
+      --stagger-index I   Zero-based slot index; requires --stagger-minutes
   -h, --help              Show this help and exit
   -V, --version           Show the version and exit
 
@@ -165,6 +176,22 @@ time_plus_minutes() {
     h="${hhmm%%:*}"; m="${hhmm##*:}"
     total=$(( (10#$h * 60 + 10#$m + add) % 1440 ))
     printf '%02d:%02d' $(( total / 60 )) $(( total % 60 ))
+}
+
+timer_randomized_delay() {
+    if [[ -n "$STAGGER_MINUTES" ]]; then
+        printf '0'
+    else
+        printf '30min'
+    fi
+}
+
+scheduled_update_time() {
+    if [[ -n "$STAGGER_MINUTES" ]]; then
+        time_plus_minutes "$UPDATE_TIME" "$((STAGGER_MINUTES * STAGGER_INDEX))"
+    else
+        printf '%s' "$UPDATE_TIME"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -360,7 +387,30 @@ install_debian_updates() {
         apt-get install -y unattended-upgrades apt-listchanges
     fi
 
-    backup_file /etc/apt/apt.conf.d/50unattended-upgrades
+    if [[ "$PROFILE" == "proxmox" ]]; then
+        local reboot_time
+        reboot_time="$(time_plus_minutes "$UPDATE_TIME" 60)"
+        write_file /etc/apt/apt.conf.d/52patch-gremlin-proxmox 644 <<EOF
+// Managed by Patch Gremlin v${PATCH_GREMLIN_VERSION}.
+// Proxmox packages are intentionally excluded and remain manually updated.
+#clear Unattended-Upgrade::Allowed-Origins;
+#clear Unattended-Upgrade::Origins-Pattern;
+Unattended-Upgrade::Origins-Pattern {
+        "origin=Debian,codename=\${distro_codename}-security,label=Debian-Security";
+        "origin=Debian,codename=\${distro_codename}-security";
+};
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Automatic-Reboot-Time "${reboot_time}";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";
+Unattended-Upgrade::Remove-Unused-Dependencies "false";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "false";
+Unattended-Upgrade::SyslogEnable "true";
+Unattended-Upgrade::SyslogFacility "daemon";
+Unattended-Upgrade::Verbose "${VERBOSE_LOGGING}";
+EOF
+    else
+        backup_file /etc/apt/apt.conf.d/50unattended-upgrades
 
     local origins
     # shellcheck disable=SC2016 # ${distro_codename} is apt's variable, kept literal
@@ -388,7 +438,7 @@ install_debian_updates() {
     local reboot_time
     reboot_time="$(time_plus_minutes "$UPDATE_TIME" 60)"
 
-    write_file /etc/apt/apt.conf.d/50unattended-upgrades 644 <<EOF
+        write_file /etc/apt/apt.conf.d/50unattended-upgrades 644 <<EOF
 // Managed by Patch Gremlin v${PATCH_GREMLIN_VERSION} - regenerated on setup.
 Unattended-Upgrade::Origins-Pattern {
 ${origins}
@@ -409,6 +459,7 @@ Unattended-Upgrade::SyslogEnable "true";
 Unattended-Upgrade::SyslogFacility "daemon";
 Unattended-Upgrade::Verbose "${VERBOSE_LOGGING}";
 EOF
+    fi
 
     local periodic_verbose=0
     [[ "$VERBOSE_LOGGING" == "true" ]] && periodic_verbose=2
@@ -427,7 +478,7 @@ EOF
 [Timer]
 OnCalendar=
 OnCalendar=$(oncalendar_expression)
-RandomizedDelaySec=30min
+RandomizedDelaySec=$(timer_randomized_delay)
 EOF
 
     run_systemctl daemon-reload
@@ -478,7 +529,7 @@ EOF
 [Timer]
 OnCalendar=
 OnCalendar=$(oncalendar_expression)
-RandomizedDelaySec=30min
+RandomizedDelaySec=$(timer_randomized_delay)
 EOF
         run_systemctl daemon-reload
         run_systemctl enable --now "${AUTOMATIC_UNIT}.timer"
@@ -491,10 +542,12 @@ EOF
 }
 
 oncalendar_expression() {
+    local scheduled_time
+    scheduled_time="$(scheduled_update_time)"
     if [[ "$UPDATE_SCHEDULE" == "weekly" ]]; then
-        printf '%s *-*-* %s:00' "$UPDATE_DAY" "$UPDATE_TIME"
+        printf '%s *-*-* %s:00' "$UPDATE_DAY" "$scheduled_time"
     else
-        printf '*-*-* %s:00' "$UPDATE_TIME"
+        printf '*-*-* %s:00' "$scheduled_time"
     fi
 }
 
@@ -719,7 +772,7 @@ EOF
 heartbeat_oncalendar() {
     # Two hours after the upgrade window so it never races the upgrade unit.
     local t
-    t="$(time_plus_minutes "$UPDATE_TIME" 120)"
+    t="$(time_plus_minutes "$(scheduled_update_time)" 120)"
     if [[ "$UPDATE_SCHEDULE" == "weekly" ]]; then
         printf '%s *-*-* %s:00' "$UPDATE_DAY" "$t"
     else
@@ -984,12 +1037,40 @@ main() {
         case "$1" in
             -y|--non-interactive) NON_INTERACTIVE=true ;;
             -u|--update-only)     update_only=true ;;
+            --profile)
+                [[ $# -ge 2 ]] || { echo "--profile requires a value" >&2; exit 2; }
+                PROFILE="$2"; shift ;;
+            --stagger-minutes)
+                [[ $# -ge 2 ]] || { echo "--stagger-minutes requires an integer" >&2; exit 2; }
+                STAGGER_MINUTES="$2"; shift ;;
+            --stagger-index)
+                [[ $# -ge 2 ]] || { echo "--stagger-index requires an integer" >&2; exit 2; }
+                STAGGER_INDEX="$2"; shift ;;
             -h|--help)            usage; exit 0 ;;
             -V|--version)         echo "patch-gremlin $PATCH_GREMLIN_VERSION"; exit 0 ;;
             *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
         esac
         shift
     done
+
+    [[ "$PROFILE" =~ ^(default|proxmox)$ ]] || {
+        echo "--profile must be 'default' or 'proxmox'" >&2
+        exit 2
+    }
+    if [[ -n "$STAGGER_MINUTES" || -n "$STAGGER_INDEX" ]]; then
+        [[ "$STAGGER_MINUTES" =~ ^[0-9]+$ && "$STAGGER_INDEX" =~ ^[0-9]+$ ]] || {
+            echo "--stagger-minutes and --stagger-index require unsigned integers and must be used together" >&2
+            exit 2
+        }
+        (( STAGGER_MINUTES >= 60 )) || {
+            echo "--stagger-minutes must be at least 60" >&2
+            exit 2
+        }
+        (( STAGGER_MINUTES * STAGGER_INDEX < 1440 )) || {
+            echo "stagger offset must be less than 1440 minutes" >&2
+            exit 2
+        }
+    fi
 
     say "${BLUE}=== Patch Gremlin Setup v${PATCH_GREMLIN_VERSION} ===${NC}"
 
@@ -999,6 +1080,9 @@ main() {
 
     detect_os
     ok "Detected $OS_ID $OS_VERSION (type: $OS_TYPE, pkg: $PACKAGE_MANAGER)"
+    if [[ "$PROFILE" == "proxmox" && "$OS_TYPE" != "debian" ]]; then
+        die "The Proxmox profile requires a Debian-family system"
+    fi
 
     if [[ -f "$SCRIPT_DIR/config.sh" ]]; then
         load_config_file "$SCRIPT_DIR/config.sh" || true
@@ -1043,6 +1127,20 @@ main() {
     fi
 
     gather_settings
+    if [[ "$PROFILE" == "proxmox" ]]; then
+        UPDATE_TYPE=security
+        AUTO_REBOOT=false
+        REBOOT_WITH_USERS=false
+    fi
+    if [[ -n "$STAGGER_MINUTES" ]]; then
+        local base_minutes stagger_offset
+        base_minutes=$((10#${UPDATE_TIME%%:*} * 60 + 10#${UPDATE_TIME##*:}))
+        stagger_offset=$((STAGGER_MINUTES * STAGGER_INDEX))
+        (( base_minutes + stagger_offset < 1440 )) || {
+            echo "staggered update time must remain within the same day" >&2
+            exit 2
+        }
+    fi
     apply_timezone
     gather_local_secrets
     ensure_doppler

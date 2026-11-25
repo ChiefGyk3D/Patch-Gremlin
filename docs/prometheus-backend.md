@@ -13,4 +13,6 @@ status. `PATCH_GREMLIN_STATE_STALE_SECONDS` changes that threshold.
 It exports the issue #56 metric names, including both
 `patch_gremlin_reboot_required` and the compatibility alias
 `node_reboot_required`. Pending packages are labeled `all`, `security`, and
-`proxmox`; apt simulation output supplies the counts.
+`proxmox`; strict parsing of `apt-cache policy` candidate rows supplies the
+origin classification. `patch_gremlin_reboot_required_packages` counts
+nonempty lines in `/var/run/reboot-required.pkgs` when that file exists.

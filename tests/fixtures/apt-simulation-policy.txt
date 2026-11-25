@@ -1,0 +1,13 @@
+Reading package lists...
+Building dependency tree...
+The following packages have been kept back:
+  held-one held-two
+The following packages will be upgraded:
+  base-files hostile-name linux-libc-dev pve-manager
+4 upgraded, 0 newly installed, 0 to remove and 2 not upgraded.
+Inst base-files [13.8+deb13u1] (13.8+deb13u2 Debian:13/stable [amd64])
+Inst hostile-name [1] (2 Debian:13/stable [amd64])
+Inst linux-libc-dev [6.12.48-1] (6.12.57-1 Debian-Security:13/stable-security [amd64])
+Inst pve-manager [9.0.5] (9.0.10 Proxmox:stable [amd64])
+Inst evil$(touch${IFS}$PATCH_GREMLIN_TEST_MARKER) [1] (2 Unknown:stable [amd64])
+Conf base-files (13.8+deb13u2 Debian:13/stable [amd64])

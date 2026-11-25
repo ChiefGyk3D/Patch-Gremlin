@@ -65,6 +65,22 @@ uninstall() {
     [ ! -e "$ROOTDIR/var/lib/patch-gremlin" ]
 }
 
+@test "uninstall: removes the Proxmox profile drop-in but preserves the packaged conffile" {
+    mkdir -p "$ROOTDIR/etc/apt/apt.conf.d"
+    printf '%s\n' '// packaged sentinel' > "$ROOTDIR/etc/apt/apt.conf.d/50unattended-upgrades"
+    run env PATH="$HELPERS:$PATH" PATCH_GREMLIN_ROOT="$ROOTDIR" \
+        PATCH_GREMLIN_OS_TYPE=debian UPDATE_TYPE=security UPDATE_SCHEDULE=daily \
+        UPDATE_TIME=02:00 SECRET_MODE=local VERBOSE_LOGGING=false AUTO_REBOOT=false \
+        LOCAL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/1/abc \
+        bash "$REPO_ROOT/setup-unattended-upgrades.sh" --non-interactive --profile proxmox
+    [ "$status" -eq 0 ]
+    [ -e "$ROOTDIR/etc/apt/apt.conf.d/52patch-gremlin-proxmox" ]
+    uninstall
+    [ "$status" -eq 0 ]
+    [ ! -e "$ROOTDIR/etc/apt/apt.conf.d/52patch-gremlin-proxmox" ]
+    grep -Fxq '// packaged sentinel' "$ROOTDIR/etc/apt/apt.conf.d/50unattended-upgrades"
+}
+
 @test "uninstall: leaves no trace of the Doppler token" {
     full_install
     uninstall
