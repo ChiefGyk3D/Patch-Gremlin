@@ -40,9 +40,15 @@ sudo doppler secrets
 
 **Note**: Root and regular users have separate Doppler authentication.
 
-**Symptom**: the journal for `update-notifier.service` shows `Unable to create config directory`, or setup prints `Notification dry-run failed (exit N): ...` followed by the CLI's own message, and no notice arrives.
+**Symptom**: the journal for `update-notifier.service` shows `Unable to create config directory`,
+or setup prints `Notification dry-run failed (exit N): ...` followed by the CLI's own message,
+and no notice arrives.
 
-**Cause and fix (fixed in the release after 2.0.1)**: the hardened unit hides `/root` and makes the rest of the disk read-only, so the Doppler CLI cannot create its config directory under the real home. The installed unit now sets `Environment=HOME=/var/lib/patch-gremlin` (already in `ReadWritePaths`, so no path is widened). On an install from 2.0.1, re-run the setup script, or add a drop-in:
+**Cause and fix (fixed in the release after 2.0.1)**: the hardened unit hides `/root` and makes
+the rest of the disk read-only, so the Doppler CLI cannot create its config directory under the
+real home. The installed unit now sets `Environment=HOME=/var/lib/patch-gremlin` (already in
+`ReadWritePaths`, so no path is widened). On an install from 2.0.1, re-run the setup script,
+or add a drop-in:
 
 ```bash
 sudo systemctl edit update-notifier.service
@@ -52,7 +58,10 @@ sudo systemctl edit update-notifier.service
 sudo systemctl daemon-reload
 ```
 
-The token is read from `/etc/update-notifier/env`; the notifier hands it to the Doppler CLI process only (never in arguments, never to other programs). If the CLI says it has no token on a manual run, check that `/etc/update-notifier/env` is mode 600, owned by root, and contains a `DOPPLER_TOKEN=` line. Never paste the token into a ticket or a log.
+The token is read from `/etc/update-notifier/env`; the notifier hands it to the Doppler CLI
+process only (never in arguments, never to other programs). If the CLI says it has no token on a
+manual run, check that `/etc/update-notifier/env` is mode 600, owned by root, and contains a
+`DOPPLER_TOKEN=` line. Never paste the token into a ticket or a log.
 
 ### 3. Hostname Resolution Error
 
