@@ -808,6 +808,13 @@ After=network-online.target
 Type=oneshot
 EnvironmentFile=/etc/update-notifier/env
 EnvironmentFile=-/etc/update-notifier/secrets.conf
+# ProtectHome=true hides /root and ProtectSystem=strict makes the rest
+# read-only, so the Doppler CLI cannot create its config directory under
+# the real home. Point HOME at the state directory, which is already in
+# ReadWritePaths (nothing is widened); the CLI keeps its config in
+# /var/lib/patch-gremlin/.doppler. The service token comes from
+# /etc/update-notifier/env, so no login state has to live there.
+Environment=HOME=/var/lib/patch-gremlin
 ExecStart=/usr/local/bin/update-notifier.sh
 User=root
 TimeoutStartSec=300
@@ -1147,13 +1154,26 @@ verify_install() {
     local notifier
     notifier="$(p /usr/local/bin/update-notifier.sh)"
     if [[ -x "$notifier" ]]; then
-        if PATCH_GREMLIN_DRY_RUN=true \
+        local dry_out dry_rc=0 reason
+        # Read the staged env file (the notifier otherwise defaults to the real
+        # /etc path) and keep the output: it can name the cause. The notifier
+        # hands the Doppler token to the CLI itself, so nothing is exported here.
+        # env -u makes this check use only what the env file provides, exactly
+        # like a later manual run, instead of a token inherited from this shell.
+        dry_out="$(env -u DOPPLER_TOKEN PATCH_GREMLIN_DRY_RUN=true \
+           PATCH_GREMLIN_ENV_FILE="$(p /etc/update-notifier/env)" \
            PATCH_GREMLIN_SECRETS_FILE="$(p /etc/update-notifier/secrets.conf)" \
            PATCH_GREMLIN_STATE_DIR="$(p /var/lib/patch-gremlin)" \
-           "$notifier" &>/dev/null; then
+           "$notifier" 2>&1)" || dry_rc=$?
+        if [[ "$dry_rc" -eq 0 ]]; then
             ok "Notification dry-run succeeded"
         else
-            warn "Notification dry-run failed - check secrets with: sudo $SCRIPT_DIR/diagnose-config.sh"
+            # One safe line: the last ERROR line plus the CLI's own message
+            # (the notifier already redacts it), any Doppler-token-shaped
+            # text removed, length capped.
+            reason="$(printf '%s\n' "$dry_out" | grep -E 'ERROR|Doppler said' | tail -n 2 \
+                | tr '\n' ';' | sed -E 's/dp\.[a-z]+\.[A-Za-z0-9]+/[REDACTED]/g' | cut -c1-300)"
+            warn "Notification dry-run failed (exit $dry_rc): ${reason:-no error line captured} - check secrets with: sudo $SCRIPT_DIR/diagnose-config.sh"
         fi
     fi
 

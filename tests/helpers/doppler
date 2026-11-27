@@ -1,0 +1,31 @@
+#!/bin/bash
+# Fake Doppler CLI that fails the way the real one does (issue #64):
+#   - HOME unwritable  -> "Unable to create config directory", exit 1
+#   - no DOPPLER_TOKEN in the process environment -> "You must provide a token"
+# Otherwise `me` succeeds and `secrets get NAME --plain` prints a canned value
+# for the Discord secret and fails for every other name (as an unset secret does).
+# Records argv (never the token) and whether the token was present.
+
+cap="${STUB_CAPTURE_DIR:-/dev/null}"
+[[ -d "$cap" ]] && printf '%s\n' "$*" >> "$cap/doppler-argv"
+
+if ! mkdir -p "$HOME/.doppler" 2>/dev/null; then
+    echo "Doppler Error: Unable to create config directory $HOME/.doppler" >&2
+    exit 1
+fi
+if [[ -z "${DOPPLER_TOKEN:-}" ]]; then
+    echo "Doppler Error: You must provide a token" >&2
+    exit 1
+fi
+[[ -d "$cap" ]] && echo "token-present" >> "$cap/doppler-env"
+
+case "$1" in
+    me) echo "service token ok" ;;
+    secrets)
+        if [[ "$2 $3" == "get UPDATE_NOTIFIER_DISCORD_WEBHOOK" ]]; then
+            echo "https://discord.com/api/webhooks/1/abc"
+        else
+            exit 1
+        fi ;;
+    *) exit 1 ;;
+esac

@@ -959,6 +959,22 @@ parse_kv_file() {
     done < "$file"
 }
 
+# Run the Doppler CLI with the service token in ITS environment only.
+# load_secrets reads DOPPLER_TOKEN from the env file into a plain shell
+# variable (not exported), so a hand run would otherwise reach the CLI with no
+# token. A per-command assignment exports it to this one process: it never
+# lands in argv, never in the shell's own environment, and never reaches
+# curl or any other child. Under systemd the variable is already exported by
+# EnvironmentFile=, so the same call works unchanged. With no token set, the
+# CLI falls back to its own stored login.
+doppler_cli() {
+    if [[ -n "${DOPPLER_TOKEN:-}" ]]; then
+        DOPPLER_TOKEN="$DOPPLER_TOKEN" doppler "$@"
+    else
+        doppler "$@"
+    fi
+}
+
 load_secrets() {
     local -A env_values=()
     local key
@@ -1029,13 +1045,13 @@ load_secrets() {
         return 1
     fi
     local doppler_error
-    if ! doppler_error="$(doppler me 2>&1)"; then
+    if ! doppler_error="$(doppler_cli me 2>&1)"; then
         log "ERROR: Doppler authentication failed - run 'doppler login'"
         log "Doppler said: $(printf '%s' "$doppler_error" | head -1 | sed 's/[Tt]oken[^ ]*/[REDACTED]/g')"
         return 1
     fi
 
-    doppler_get() { doppler secrets get "$1" --plain 2>/dev/null || true; }
+    doppler_get() { doppler_cli secrets get "$1" --plain 2>/dev/null || true; }
     DISCORD_WEBHOOK="$(doppler_get "$DOPPLER_DISCORD_SECRET")"
     TEAMS_WEBHOOK="$(doppler_get "$DOPPLER_TEAMS_SECRET")"
     SLACK_WEBHOOK="$(doppler_get "$DOPPLER_SLACK_SECRET")"
