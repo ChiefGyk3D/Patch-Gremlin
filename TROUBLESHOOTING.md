@@ -46,22 +46,27 @@ and no notice arrives.
 
 **Cause and fix (fixed in the release after 2.0.1)**: the hardened unit hides `/root` and makes
 the rest of the disk read-only, so the Doppler CLI cannot create its config directory under the
-real home. The installed unit now sets `Environment=HOME=/var/lib/patch-gremlin` (already in
-`ReadWritePaths`, so no path is widened). On an install from 2.0.1, re-run the setup script,
-or add a drop-in:
+real home. The installed unit now sets `Environment=HOME=/var/lib/patch-gremlin/home`, a
+root-owned mode 700 directory the setup creates inside `/var/lib/patch-gremlin` (already in
+`ReadWritePaths`, so no path is widened). The notifier refuses to run the CLI if that HOME is a
+symlink, not a directory, not owned by the service user or open to other users.
 
-```bash
-sudo systemctl edit update-notifier.service
-# add:
-#   [Service]
-#   Environment=HOME=/var/lib/patch-gremlin
-sudo systemctl daemon-reload
-```
+**Upgrading an install from 2.0.1**: run the setup script again, or `--update-only`. Both create
+the home directory and point the unit at it. Do not add a hand-made drop-in with
+`Environment=HOME=/var/lib/patch-gremlin`: a drop-in overrides the unit, and that path is the
+shared state directory. If you already added one, the setup removes just that line (and the file,
+if nothing else is in it) on its next run; running it again changes nothing more. To do it by
+hand, delete the line with `sudo systemctl edit update-notifier.service`, then run
+`sudo systemctl daemon-reload`. A `.doppler` directory the old drop-in left in
+`/var/lib/patch-gremlin` can be removed once the unit uses the new home.
 
-The token is read from `/etc/update-notifier/env`; the notifier hands it to the Doppler CLI
-process only (never in arguments, never to other programs). If the CLI says it has no token on a
-manual run, check that `/etc/update-notifier/env` is mode 600, owned by root, and contains a
-`DOPPLER_TOKEN=` line. Never paste the token into a ticket or a log.
+The token is read from `/etc/update-notifier/env`. The notifier drops the export flag from the
+variable at start, so programs such as `curl` do not inherit it, and it hands the token to the
+Doppler CLI process only (never in arguments). The CLI's own error text is never copied into
+the journal or the setup output; you get a fixed message instead. To see the real error, run
+`sudo doppler me` yourself. If the CLI says it has no token on a manual run, check that
+`/etc/update-notifier/env` is mode 600, owned by root, and contains a `DOPPLER_TOKEN=` line.
+Never paste the token into a ticket or a log.
 
 ### 3. Hostname Resolution Error
 

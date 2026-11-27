@@ -9,6 +9,12 @@
 cap="${STUB_CAPTURE_DIR:-/dev/null}"
 [[ -d "$cap" ]] && printf '%s\n' "$*" >> "$cap/doppler-argv"
 
+# Scripted failure with arbitrary text (used to prove the notifier never echoes it).
+if [[ -n "${STUB_DOPPLER_MSG:-}" ]]; then
+    printf '%b\n' "$STUB_DOPPLER_MSG" >&2
+    exit 1
+fi
+
 if ! mkdir -p "$HOME/.doppler" 2>/dev/null; then
     echo "Doppler Error: Unable to create config directory $HOME/.doppler" >&2
     exit 1

@@ -31,6 +31,12 @@ ENV_FILE="${PATCH_GREMLIN_ENV_FILE:-/etc/update-notifier/env}"
 STATE_DIR="${PATCH_GREMLIN_STATE_DIR:-/var/lib/patch-gremlin}"
 LOCK_FILE="${PATCH_GREMLIN_LOCK_FILE:-/run/patch-gremlin.lock}"
 EVENTS_FILE="${PATCH_GREMLIN_EVENTS_FILE:-}"
+
+# Token confinement. Under systemd, EnvironmentFile= exports DOPPLER_TOKEN into
+# this process, and from here into every child (curl, logger, date, ...). Keep
+# the value but drop the export flag right away; doppler_cli below puts it into
+# the environment of the Doppler CLI process only.
+if [[ -n "${DOPPLER_TOKEN+x}" ]]; then export -n DOPPLER_TOKEN; fi
 EVENTS_MAX_BYTES="${PATCH_GREMLIN_EVENTS_MAX_BYTES:-1048576}"
 
 # Discord embed colours
@@ -964,10 +970,45 @@ parse_kv_file() {
 # variable (not exported), so a hand run would otherwise reach the CLI with no
 # token. A per-command assignment exports it to this one process: it never
 # lands in argv, never in the shell's own environment, and never reaches
-# curl or any other child. Under systemd the variable is already exported by
-# EnvironmentFile=, so the same call works unchanged. With no token set, the
-# CLI falls back to its own stored login.
+# curl or any other child. Under systemd the unit exports the variable, but the
+# top of this script un-exports it again, so this per-call assignment is the
+# only way the token reaches a child. With no token set, the CLI falls back to
+# its own stored login.
+#
+# The CLI writes config and cache under $HOME, so refuse a HOME that a lower
+# privilege user could have pre-seeded: it must be a real directory (not a
+# symlink), owned by the running user (root in production) and closed to
+# other users (no group write, no access for others). The unit points HOME at
+# a root-owned 0700 directory; /root (0700, or 0550 on RHEL) passes as well.
+doppler_home_ok() {
+    local h="${HOME:-}" mode owner want
+    if [[ -z "$h" || -L "$h" || ! -d "$h" ]]; then
+        log "ERROR: refusing to run the Doppler CLI: HOME is not a real directory"
+        return 1
+    fi
+    mode="$(stat -c '%a' "$h" 2>/dev/null || echo 777)"
+    owner="$(stat -c '%u' "$h" 2>/dev/null || echo 65534)"
+    want="$(id -u)"
+    if [[ "$owner" != "$want" ]] || (( (8#$mode & 8#027) != 0 )); then
+        log "ERROR: refusing to run the Doppler CLI: HOME must be owned by the service user and mode 700"
+        return 1
+    fi
+    return 0
+}
+
+# Fixed messages only: raw CLI output can carry tokens, webhook URLs and
+# terminal control sequences, so it is classified and never echoed.
+doppler_error_text() {
+    case "$1" in
+        *"refusing to run the Doppler CLI"*) printf '%s' "refusing to run the Doppler CLI: HOME is not a safe directory (real directory, owned by the service user, mode 700)" ;;
+        *"Unable to create config directory"*) printf '%s' "Unable to create config directory (CLI home not writable)" ;;
+        *[Tt]oken*) printf '%s' "the service token is missing, invalid or was rejected" ;;
+        *) printf '%s' "the CLI reported an error (run 'doppler me' as root to see it)" ;;
+    esac
+}
+
 doppler_cli() {
+    doppler_home_ok || return 1
     if [[ -n "${DOPPLER_TOKEN:-}" ]]; then
         DOPPLER_TOKEN="$DOPPLER_TOKEN" doppler "$@"
     else
@@ -1002,7 +1043,13 @@ load_secrets() {
         local line key value
         while IFS= read -r line; do
             [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+            # Match systemd's EnvironmentFile reading: tolerate CRLF, trim
+            # surrounding whitespace and drop one pair of matching quotes.
+            line="${line%$'\r'}"
+            line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+            [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
             key="${line%%=*}"; value="${line#*=}"
+            if [[ "$value" =~ ^\"(.*)\"$ || "$value" =~ ^\'(.*)\'$ ]]; then value="${BASH_REMATCH[1]}"; fi
             [[ "$key" =~ ^(SECRET_MODE|DOPPLER_TOKEN|DOPPLER_[A-Z_]+_SECRET)$ ]] || continue
             # Only fill in what the environment has not already provided.
             [[ -n "${!key:-}" ]] || printf -v "$key" '%s' "$value"
@@ -1047,7 +1094,7 @@ load_secrets() {
     local doppler_error
     if ! doppler_error="$(doppler_cli me 2>&1)"; then
         log "ERROR: Doppler authentication failed - run 'doppler login'"
-        log "Doppler said: $(printf '%s' "$doppler_error" | head -1 | sed 's/[Tt]oken[^ ]*/[REDACTED]/g')"
+        log "Doppler said: $(doppler_error_text "$doppler_error")"
         return 1
     fi
 
