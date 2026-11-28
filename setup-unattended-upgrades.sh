@@ -812,62 +812,26 @@ ensure_cli_home() {
     fi
 }
 
-# Hosts that got the hand-made fix for issue 64 carry a drop-in with
-# Environment=HOME=/var/lib/patch-gremlin. A drop-in beats the main unit, so it
-# would keep the CLI on the shared state directory. Remove just that line; delete
-# the file only when nothing else is left in it. Safe to run repeatedly.
+# Hosts that got the hand-made fix for issue 64 carry a drop-in that sets
+# HOME=/var/lib/patch-gremlin. A drop-in beats the main unit, so it would keep
+# the CLI on the shared state directory. Systemd's syntax (quotes, escapes, line
+# continuations) is too rich to rewrite safely, so only the exact file this
+# project documented is deleted: its non-comment, non-blank content is
+# "[Service]" plus that one Environment line. Any other file that mentions HOME
+# is left untouched and reported for the owner to review by hand.
 migrate_home_dropin() {
-    local dir f tmp
-    # Environment= takes space-separated assignments, each optionally in single
-    # or double quotes, with optional blanks around the "=". Drop every
-    # assignment that decodes to HOME=/var/lib/patch-gremlin (trailing slashes
-    # allowed), keep the rest of the line as it was.
-    local filter
-    IFS= read -r -d '' filter <<'AWK' || true
-    {
-        if (match($0, /^[ \t]*Environment[ \t]*=/)) {
-            rhs = substr($0, RLENGTH + 1); out = ""; changed = 0
-            n = length(rhs); i = 1
-            while (i <= n) {
-                c = substr(rhs, i, 1)
-                if (c == " " || c == "\t") { i++; continue }
-                if (c == "\"" || c == "\047") {
-                    j = i + 1
-                    while (j <= n && substr(rhs, j, 1) != c) j++
-                    tok = substr(rhs, i, j - i + 1); val = substr(rhs, i + 1, j - i - 1); i = j + 1
-                } else {
-                    j = i
-                    while (j <= n && substr(rhs, j, 1) != " " && substr(rhs, j, 1) != "\t") j++
-                    tok = substr(rhs, i, j - i); val = tok; i = j
-                }
-                if (val ~ /^HOME=\/var\/lib\/patch-gremlin\/*$/) { changed = 1; continue }
-                out = out (out == "" ? "" : " ") tok
-            }
-            if (changed) { if (out != "") print "Environment=" out; next }
-        }
-        print
-    }
-AWK
+    local dir f body
     dir="$(p /etc/systemd/system/update-notifier.service.d)"
     [[ -d "$dir" ]] || return 0
     for f in "$dir"/*.conf; do
         [[ -f "$f" && ! -L "$f" ]] || continue
-        tmp="$(mktemp "${f}.tmp.XXXXXX")"
-        awk "$filter" "$f" > "$tmp"
-        if cmp -s "$f" "$tmp"; then
-            rm -f -- "$tmp"
-            continue
+        body="$(grep -Ev '^[[:space:]]*([#;].*)?$' "$f" || true)"
+        if [[ "$body" == $'[Service]\nEnvironment=HOME=/var/lib/patch-gremlin' ]]; then
+            rm -f -- "$f"
+            ok "Removed the old HOME override file $f"
+        elif grep -qi 'HOME' "$f"; then
+            warn "Old HOME override may remain in $(printf '%q' "$f") - review it and remove the HOME setting by hand"
         fi
-        if [[ -z "$(grep -Ev '^[[:space:]]*(#.*|\[Service\])?[[:space:]]*$' "$tmp" || true)" ]]; then
-            rm -f -- "$tmp" "$f"
-        else
-            # Keep the original mode and owner: such a file may hold other,
-            # private settings and must not become readable by everyone.
-            chmod --reference="$f" "$tmp"
-            chown --reference="$f" "$tmp" 2>/dev/null || true
-            mv -f -- "$tmp" "$f"
-        fi
-        ok "Removed the old HOME override from $f"
     done
     rmdir "$dir" 2>/dev/null || true
 }
@@ -1283,14 +1247,22 @@ verify_install() {
 }
 
 # On a live host, confirm systemd's merged view of the unit (drop-ins included)
-# really uses the dedicated CLI home. Skipped in a staged root.
+# really uses the dedicated CLI home. The value must match exactly: systemd
+# prints the assignments separated by spaces and the last HOME wins, so the
+# last HOME assignment has to equal the expected one. No substring matching.
+# Skipped in a staged root unless the test suite forces it (stub systemctl).
 check_effective_home() {
-    local env_line
-    if [[ -n "$PG_ROOT" ]] || ! command -v systemctl >/dev/null 2>&1; then
+    local env_line part last_home="" parts=()
+    if [[ -n "$PG_ROOT" && "${PATCH_GREMLIN_TEST_SYSTEMCTL:-}" != "true" ]] ||
+       ! command -v systemctl >/dev/null 2>&1; then
         return 0
     fi
     env_line="$(systemctl show -p Environment --value update-notifier.service 2>/dev/null || true)"
-    if [[ "$env_line" == *"HOME=/var/lib/patch-gremlin/home"* ]]; then
+    read -ra parts <<< "$env_line"
+    for part in ${parts[@]+"${parts[@]}"}; do
+        if [[ "$part" == HOME=* ]]; then last_home="$part"; fi
+    done
+    if [[ "$last_home" == "HOME=/var/lib/patch-gremlin/home" ]]; then
         ok "update-notifier.service uses the private CLI home"
     else
         warn "update-notifier.service does not use HOME=/var/lib/patch-gremlin/home - check drop-ins with: systemctl cat update-notifier.service"

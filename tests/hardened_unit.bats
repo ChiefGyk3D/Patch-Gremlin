@@ -243,52 +243,76 @@ full_setup() {
     [[ "$output" == *"symlink"* ]]
 }
 
-@test "setup: the hand-made HOME drop-in is removed cleanly and a re-run is idempotent" {
+@test "setup: the exact documented HOME drop-in is deleted, a re-run is idempotent" {
     dir="$ROOTDIR/etc/systemd/system/update-notifier.service.d"
     mkdir -p "$dir"
-    printf '[Service]\nEnvironment=HOME=/var/lib/patch-gremlin\n' > "$dir/override.conf"
-    printf '[Service]\nEnvironment=HOME=/var/lib/patch-gremlin\nEnvironment=FOO=bar\n' > "$dir/other.conf"
+    printf '# added by hand for issue 64\n\n[Service]\n; note\nEnvironment=HOME=/var/lib/patch-gremlin\n\n' \
+        > "$dir/override.conf"
     full_setup
     [ "$status" -eq 0 ]
     [ ! -e "$dir/override.conf" ]
-    grep -qx 'Environment=FOO=bar' "$dir/other.conf"
-    ! grep -q 'HOME=' "$dir/other.conf"
+    [[ "$output" != *"Old HOME override"* ]]
     full_setup
     [ "$status" -eq 0 ]
-    grep -qx 'Environment=FOO=bar' "$dir/other.conf"
+    [[ "$output" != *"Old HOME override"* ]]
 }
 
-@test "setup: drop-in migration keeps a private file's mode (600 stays 600)" {
+@test "setup: any other drop-in shape that sets HOME is left untouched with one warning" {
     dir="$ROOTDIR/etc/systemd/system/update-notifier.service.d"
     mkdir -p "$dir"
-    printf '[Service]\nEnvironment=HOME=/var/lib/patch-gremlin\nEnvironment=PRIVATE=1\n' > "$dir/private.conf"
-    chmod 600 "$dir/private.conf"
+    printf '[Service]\nEnvironment=HOME=/var/lib/patch-gremlin\nEnvironment=FOO=bar\n' > "$dir/a-other.conf"
+    printf '[Service]\nEnvironment="HOME=/var/lib/patch-gremlin"\n' > "$dir/b-quoted.conf"
+    printf '[Service]\nEnvironment = HOME=/var/lib/patch-gremlin\n' > "$dir/c-spaced.conf"
+    printf '[Service]\nEnvironment=HOME=/var/lib/patch-gremlin/\n' > "$dir/d-slash.conf"
+    printf '[Service]\nEnvironment=HOME=/somewhere/else\n' > "$dir/e-path.conf"
+    printf '[Service]\nEnvironment=HOME=/var/lib/\\\npatch-gremlin\n' > "$dir/f-continued.conf"
+    printf '[Service]\nEnvironment="HOME=/var/lib/patch\\x2dgremlin"\n' > "$dir/g-escaped.conf"
+    printf '[Service]\r\nEnvironment=HOME=/var/lib/patch-gremlin\r\n' > "$dir/h-crlf.conf"
+    printf '[Service]\nEnvironment=HOME=/var/lib/patch-gremlin\n[Install]\nWantedBy=x\n' > "$dir/i-more.conf"
+    chmod 600 "$dir/a-other.conf"
+    # A file that does not touch HOME is none of our business: no warning.
+    printf '[Service]\nEnvironment=FOO=bar\n' > "$dir/z-unrelated.conf"
+    before="$(cd "$dir" && sha256sum -- *.conf)"
     full_setup
     [ "$status" -eq 0 ]
-    [ "$(stat -c '%a' "$dir/private.conf")" = "600" ]
-    grep -qx 'Environment=PRIVATE=1' "$dir/private.conf"
-    ! grep -q 'HOME=' "$dir/private.conf"
+    [ "$(cd "$dir" && sha256sum -- *.conf)" = "$before" ]
+    [ "$(stat -c '%a' "$dir/a-other.conf")" = "600" ]
+    for f in a-other b-quoted c-spaced d-slash e-path f-continued g-escaped h-crlf i-more; do
+        [[ "$output" == *"Old HOME override"*"$f.conf"* ]]
+    done
+    [ "$(printf '%s\n' "$output" | grep -c 'Old HOME override')" -eq 9 ]
+    [[ "$output" != *"z-unrelated"* ]]
 }
 
-@test "setup: drop-in migration catches quoted, spaced and slashed forms, keeps other settings" {
-    dir="$ROOTDIR/etc/systemd/system/update-notifier.service.d"
-    mkdir -p "$dir"
-    printf '[Service]\nEnvironment="HOME=/var/lib/patch-gremlin"\n' > "$dir/a.conf"
-    printf '[Service]\nEnvironment = HOME=/var/lib/patch-gremlin\n' > "$dir/b.conf"
-    printf '[Service]\nEnvironment=HOME=/var/lib/patch-gremlin/\n' > "$dir/c.conf"
-    printf '[Service]\nEnvironment="HOME=/var/lib/patch-gremlin" FOO=bar\n' > "$dir/d.conf"
-    printf "[Service]\nEnvironment='HOME=/var/lib/patch-gremlin' \"BAZ=a b\"\n" > "$dir/e.conf"
-    printf '[Service]\nEnvironment=HOME=/somewhere/else\n' > "$dir/f.conf"
-    full_setup
-    [ "$status" -eq 0 ]
-    [ ! -e "$dir/a.conf" ]
-    [ ! -e "$dir/b.conf" ]
-    [ ! -e "$dir/c.conf" ]
-    grep -qx 'Environment=FOO=bar' "$dir/d.conf"
-    grep -qx 'Environment="BAZ=a b"' "$dir/e.conf"
-    # An unrelated HOME is not ours to remove.
-    grep -qx 'Environment=HOME=/somewhere/else' "$dir/f.conf"
+# The live-host check is skipped in a staged root; the knob forces it so the
+# stub systemctl can feed it a merged Environment line.
+effective_check() {
+    full_setup PATCH_GREMLIN_TEST_SYSTEMCTL=true STUB_SYSTEMCTL_ENV="$1"
 }
+
+@test "setup: the effective-HOME check passes on the exact value only" {
+    effective_check "LANG=C HOME=/var/lib/patch-gremlin/home PATH=/usr/bin"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"uses the private CLI home"* ]]
+    # The last HOME wins, as in systemd.
+    effective_check "HOME=/root HOME=/var/lib/patch-gremlin/home"
+    [[ "$output" == *"uses the private CLI home"* ]]
+}
+
+@test "setup: the effective-HOME check rejects look-alikes, supersets and a later HOME" {
+    for v in "HOME=/var/lib/patch-gremlin/home2" \
+             "HOME=/var/lib/patch-gremlin/home/x" \
+             "XHOME=/var/lib/patch-gremlin/home" \
+             "HOME=/var/lib/patch-gremlin/home HOME=/var/lib/patch-gremlin" \
+             "HOME=/var/lib/patch-gremlin" \
+             ""; do
+        effective_check "$v"
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"does not use HOME=/var/lib/patch-gremlin/home"* ]]
+        [[ "$output" != *"uses the private CLI home"* ]]
+    done
+}
+
 
 @test "setup: --update-only moves an old unit to the new HOME, idempotently" {
     full_setup
