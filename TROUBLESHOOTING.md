@@ -41,15 +41,18 @@ sudo doppler secrets
 **Note**: Root and regular users have separate Doppler authentication.
 
 **Symptom**: the journal for `update-notifier.service` shows `Unable to create config directory`,
-or setup prints `Notification dry-run failed (exit N): ...` followed by the CLI's own message,
-and no notice arrives.
+or setup prints `Notification dry-run failed (exit N): ...` followed by a short fixed description of
+the problem, and no notice arrives.
 
 **Cause and fix (fixed in the release after 2.0.1)**: the hardened unit hides `/root` and makes
 the rest of the disk read-only, so the Doppler CLI cannot create its config directory under the
 real home. The installed unit now sets `Environment=HOME=/var/lib/patch-gremlin/home`, a
 root-owned mode 700 directory the setup creates inside `/var/lib/patch-gremlin` (already in
 `ReadWritePaths`, so no path is widened). The notifier refuses to run the CLI if that HOME is a
-symlink, not a directory, not owned by the service user or open to other users.
+symlink, not a directory, not owned by the service user or accessible to group or others at all
+(only mode 700 passes). On a hand run whose own HOME fails that test (for example `/root` at
+mode 550 on RHEL), the notifier uses `/var/lib/patch-gremlin/home` instead, never the shared
+state directory.
 
 **Upgrading an install from 2.0.1**: run the setup script again, or `--update-only`. Both create
 the home directory and point the unit at it. Do not add a hand-made drop-in with
@@ -57,7 +60,10 @@ the home directory and point the unit at it. Do not add a hand-made drop-in with
 shared state directory. If you already added one, the setup removes just that line (and the file,
 if nothing else is in it) on its next run; running it again changes nothing more. To do it by
 hand, delete the line with `sudo systemctl edit update-notifier.service`, then run
-`sudo systemctl daemon-reload`. A `.doppler` directory the old drop-in left in
+`sudo systemctl daemon-reload`. The setup drops the old override in its quoted, spaced and
+trailing-slash spellings too, keeps the file's mode and any other settings in it, and on a live
+host checks the merged unit with `systemctl show` (look for `HOME=/var/lib/patch-gremlin/home`).
+A `.doppler` directory the old drop-in left in
 `/var/lib/patch-gremlin` can be removed once the unit uses the new home.
 
 The token is read from `/etc/update-notifier/env`. The notifier drops the export flag from the
@@ -67,6 +73,11 @@ the journal or the setup output; you get a fixed message instead. To see the rea
 `sudo doppler me` yourself. If the CLI says it has no token on a manual run, check that
 `/etc/update-notifier/env` is mode 600, owned by root, and contains a `DOPPLER_TOKEN=` line.
 Never paste the token into a ticket or a log.
+
+Limits to know: removing the export flag stops children from inheriting the token, but the
+kernel keeps the original start-up environment of the notifier process, so `/proc/<pid>/environ`
+stays readable by root and the same user while it runs. The notifier switches `bash -x` tracing
+off while it reads or uses the token, but do not run other scripts around it with tracing on.
 
 ### 3. Hostname Resolution Error
 

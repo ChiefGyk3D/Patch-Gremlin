@@ -39,7 +39,8 @@ run_manual() {
         PATCH_GREMLIN_CONFIG_FILE="$SANDBOX/absent-config.sh" \
         PATCH_GREMLIN_LOG_FILE="$FIXTURES/uu-upgraded.log" \
         PATCH_GREMLIN_OS_TYPE=debian PATCH_GREMLIN_DRY_RUN="${DRY:-true}" \
-        bash "$REPO_ROOT/update-notifier.sh"
+        SHELLOPTS="${PG_TEST_SHELLOPTS:-}" \
+        bash ${PG_TEST_BASHFLAGS:-} "$REPO_ROOT/update-notifier.sh"
 }
 
 # Service run: systemd's EnvironmentFile= exports the token before the start.
@@ -141,10 +142,43 @@ full_setup() {
     [ "$status" -ne 0 ]
     [[ "$output" == *"refusing to run the Doppler CLI"* ]]
     [ ! -e "$STUB_CAPTURE_DIR/doppler-argv" ]
-    chmod 770 "$GOOD_HOME"
+    # Any group or other access is refused, not just writable modes.
+    for m in 770 750 710 550 701; do
+        chmod "$m" "$GOOD_HOME"
+        run_manual "$GOOD_HOME"
+        [ "$status" -ne 0 ]
+        [ ! -e "$STUB_CAPTURE_DIR/doppler-argv" ]
+    done
+}
+
+@test "doppler: an unsafe HOME falls back to the private home below the state dir, nothing else" {
+    chmod 755 "$GOOD_HOME"
+    mkdir -p "$PATCH_GREMLIN_STATE_DIR/home"
+    chmod 700 "$PATCH_GREMLIN_STATE_DIR/home"
+    run_manual "$GOOD_HOME"
+    [ "$status" -eq 0 ]
+    [ -s "$STUB_CAPTURE_DIR/doppler-env" ]
+    # A fallback that is itself open is refused too.
+    rm -f "$STUB_CAPTURE_DIR/doppler-env" "$STUB_CAPTURE_DIR/doppler-argv"
+    chmod 755 "$PATCH_GREMLIN_STATE_DIR/home"
     run_manual "$GOOD_HOME"
     [ "$status" -ne 0 ]
     [ ! -e "$STUB_CAPTURE_DIR/doppler-argv" ]
+}
+
+@test "doppler: an inherited allexport does not re-export the token to curl" {
+    PG_TEST_SHELLOPTS=allexport DRY=false run_manual "$GOOD_HOME"
+    [ "$status" -eq 0 ]
+    [ -s "$STUB_CAPTURE_DIR/doppler-env" ]
+    grep -q '^ENV_HAS_TOKEN=no$' "$STUB_CAPTURE_DIR/call-1"
+}
+
+@test "doppler: bash -x tracing never prints the token" {
+    PG_TEST_BASHFLAGS=-x DRY=false run_manual "$GOOD_HOME"
+    [ "$status" -eq 0 ]
+    [ -s "$STUB_CAPTURE_DIR/doppler-env" ]
+    [[ "$output" == *"+ "* ]]
+    [[ "$output" != *"$TOKEN"* ]]
 }
 
 @test "doppler: a HOME owned by someone else is refused" {
@@ -222,6 +256,38 @@ full_setup() {
     full_setup
     [ "$status" -eq 0 ]
     grep -qx 'Environment=FOO=bar' "$dir/other.conf"
+}
+
+@test "setup: drop-in migration keeps a private file's mode (600 stays 600)" {
+    dir="$ROOTDIR/etc/systemd/system/update-notifier.service.d"
+    mkdir -p "$dir"
+    printf '[Service]\nEnvironment=HOME=/var/lib/patch-gremlin\nEnvironment=PRIVATE=1\n' > "$dir/private.conf"
+    chmod 600 "$dir/private.conf"
+    full_setup
+    [ "$status" -eq 0 ]
+    [ "$(stat -c '%a' "$dir/private.conf")" = "600" ]
+    grep -qx 'Environment=PRIVATE=1' "$dir/private.conf"
+    ! grep -q 'HOME=' "$dir/private.conf"
+}
+
+@test "setup: drop-in migration catches quoted, spaced and slashed forms, keeps other settings" {
+    dir="$ROOTDIR/etc/systemd/system/update-notifier.service.d"
+    mkdir -p "$dir"
+    printf '[Service]\nEnvironment="HOME=/var/lib/patch-gremlin"\n' > "$dir/a.conf"
+    printf '[Service]\nEnvironment = HOME=/var/lib/patch-gremlin\n' > "$dir/b.conf"
+    printf '[Service]\nEnvironment=HOME=/var/lib/patch-gremlin/\n' > "$dir/c.conf"
+    printf '[Service]\nEnvironment="HOME=/var/lib/patch-gremlin" FOO=bar\n' > "$dir/d.conf"
+    printf "[Service]\nEnvironment='HOME=/var/lib/patch-gremlin' \"BAZ=a b\"\n" > "$dir/e.conf"
+    printf '[Service]\nEnvironment=HOME=/somewhere/else\n' > "$dir/f.conf"
+    full_setup
+    [ "$status" -eq 0 ]
+    [ ! -e "$dir/a.conf" ]
+    [ ! -e "$dir/b.conf" ]
+    [ ! -e "$dir/c.conf" ]
+    grep -qx 'Environment=FOO=bar' "$dir/d.conf"
+    grep -qx 'Environment="BAZ=a b"' "$dir/e.conf"
+    # An unrelated HOME is not ours to remove.
+    grep -qx 'Environment=HOME=/somewhere/else' "$dir/f.conf"
 }
 
 @test "setup: --update-only moves an old unit to the new HOME, idempotently" {

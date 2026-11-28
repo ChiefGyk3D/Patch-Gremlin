@@ -817,19 +817,54 @@ ensure_cli_home() {
 # would keep the CLI on the shared state directory. Remove just that line; delete
 # the file only when nothing else is left in it. Safe to run repeatedly.
 migrate_home_dropin() {
-    local dir f rest tmp
+    local dir f tmp
+    # Environment= takes space-separated assignments, each optionally in single
+    # or double quotes, with optional blanks around the "=". Drop every
+    # assignment that decodes to HOME=/var/lib/patch-gremlin (trailing slashes
+    # allowed), keep the rest of the line as it was.
+    local filter
+    IFS= read -r -d '' filter <<'AWK' || true
+    {
+        if (match($0, /^[ \t]*Environment[ \t]*=/)) {
+            rhs = substr($0, RLENGTH + 1); out = ""; changed = 0
+            n = length(rhs); i = 1
+            while (i <= n) {
+                c = substr(rhs, i, 1)
+                if (c == " " || c == "\t") { i++; continue }
+                if (c == "\"" || c == "\047") {
+                    j = i + 1
+                    while (j <= n && substr(rhs, j, 1) != c) j++
+                    tok = substr(rhs, i, j - i + 1); val = substr(rhs, i + 1, j - i - 1); i = j + 1
+                } else {
+                    j = i
+                    while (j <= n && substr(rhs, j, 1) != " " && substr(rhs, j, 1) != "\t") j++
+                    tok = substr(rhs, i, j - i); val = tok; i = j
+                }
+                if (val ~ /^HOME=\/var\/lib\/patch-gremlin\/*$/) { changed = 1; continue }
+                out = out (out == "" ? "" : " ") tok
+            }
+            if (changed) { if (out != "") print "Environment=" out; next }
+        }
+        print
+    }
+AWK
     dir="$(p /etc/systemd/system/update-notifier.service.d)"
     [[ -d "$dir" ]] || return 0
     for f in "$dir"/*.conf; do
         [[ -f "$f" && ! -L "$f" ]] || continue
-        grep -qx 'Environment=HOME=/var/lib/patch-gremlin' "$f" || continue
-        rest="$(grep -vx 'Environment=HOME=/var/lib/patch-gremlin' "$f" || true)"
-        if [[ -z "$(printf '%s\n' "$rest" | grep -Ev '^[[:space:]]*(#.*|\[Service\])?[[:space:]]*$' || true)" ]]; then
-            rm -f -- "$f"
+        tmp="$(mktemp "${f}.tmp.XXXXXX")"
+        awk "$filter" "$f" > "$tmp"
+        if cmp -s "$f" "$tmp"; then
+            rm -f -- "$tmp"
+            continue
+        fi
+        if [[ -z "$(grep -Ev '^[[:space:]]*(#.*|\[Service\])?[[:space:]]*$' "$tmp" || true)" ]]; then
+            rm -f -- "$tmp" "$f"
         else
-            tmp="$(mktemp "${f}.tmp.XXXXXX")"
-            printf '%s\n' "$rest" > "$tmp"
-            chmod 644 "$tmp"
+            # Keep the original mode and owner: such a file may hold other,
+            # private settings and must not become readable by everyone.
+            chmod --reference="$f" "$tmp"
+            chown --reference="$f" "$tmp" 2>/dev/null || true
             mv -f -- "$tmp" "$f"
         fi
         ok "Removed the old HOME override from $f"
@@ -1244,6 +1279,22 @@ verify_install() {
             warn "Secret environment file is mode $mode, expected 600"
         fi
     fi
+    check_effective_home
+}
+
+# On a live host, confirm systemd's merged view of the unit (drop-ins included)
+# really uses the dedicated CLI home. Skipped in a staged root.
+check_effective_home() {
+    local env_line
+    if [[ -n "$PG_ROOT" ]] || ! command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+    env_line="$(systemctl show -p Environment --value update-notifier.service 2>/dev/null || true)"
+    if [[ "$env_line" == *"HOME=/var/lib/patch-gremlin/home"* ]]; then
+        ok "update-notifier.service uses the private CLI home"
+    else
+        warn "update-notifier.service does not use HOME=/var/lib/patch-gremlin/home - check drop-ins with: systemctl cat update-notifier.service"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1342,6 +1393,7 @@ main() {
         migrate_home_dropin
         remove_legacy_artifacts
         run_systemctl daemon-reload
+        check_effective_home
         ok "Scripts and units refreshed; configuration untouched"
         exit 0
     fi
