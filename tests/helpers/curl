@@ -24,6 +24,8 @@ if [[ -n "$cfg" && -r "$cfg" ]]; then
 fi
 {
   echo "URL=$url"
+  # Whether this child inherited the Doppler token (never record its value).
+  if [[ -n "${DOPPLER_TOKEN+x}" ]]; then echo "ENV_HAS_TOKEN=yes"; else echo "ENV_HAS_TOKEN=no"; fi
   echo "ARGS=$*"
   echo "CMDLINE=$(tr '\0' ' ' < /proc/$$/cmdline 2>/dev/null)"
   if [[ -n "$cfg" && -r "$cfg" ]]; then

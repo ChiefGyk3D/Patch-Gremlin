@@ -1,0 +1,8 @@
+#!/bin/bash
+# Test stub for systemctl: only `show -p Environment --value` is answered,
+# with $STUB_SYSTEMCTL_ENV. Used when the setup's live-host check is forced.
+if [[ "$1" == "show" ]]; then
+    printf '%s\n' "${STUB_SYSTEMCTL_ENV:-}"
+    exit 0
+fi
+exit 0

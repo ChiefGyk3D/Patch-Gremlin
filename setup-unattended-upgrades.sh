@@ -587,6 +587,60 @@ install_scripts() {
         ok "Installed /usr/local/bin/patch-gremlin-health-check.sh"
     fi
     mkdir -p "$(p /var/lib/patch-gremlin)"
+    ensure_cli_home
+}
+
+# Dedicated home for the Doppler CLI (it writes config and cache under HOME).
+# Separate from the state directory, which monitoring readers use: root-owned,
+# mode 0700, never a symlink. A re-run only re-asserts owner and mode.
+ensure_cli_home() {
+    local d
+    d="$(p /var/lib/patch-gremlin/home)"
+    [[ ! -L "$d" ]] || die "$d is a symlink; refusing to use it as the Doppler CLI home"
+    [[ ! -e "$d" || -d "$d" ]] || die "$d exists and is not a directory"
+    if [[ $EUID -eq 0 ]]; then
+        install -d -m 700 -o root -g root "$d"
+    else
+        install -d -m 700 "$d"
+    fi
+}
+
+# Hosts that got the hand-made fix for issue 64 carry a drop-in that sets
+# HOME=/var/lib/patch-gremlin. A drop-in beats the main unit, so it would keep
+# the CLI on the shared state directory. Systemd's syntax (quotes, escapes, line
+# continuations) is too rich to rewrite safely, so only the exact file this
+# project documented is deleted: its non-comment, non-blank content is
+# "[Service]" plus that one Environment line. Any other file that mentions HOME
+# is left untouched and reported for the owner to review by hand.
+migrate_home_dropin() {
+    local dir f body
+    dir="$(p /etc/systemd/system/update-notifier.service.d)"
+    [[ -d "$dir" ]] || return 0
+    for f in "$dir"/*.conf; do
+        [[ -f "$f" && ! -L "$f" ]] || continue
+        body="$(grep -Ev '^[[:space:]]*([#;].*)?$' "$f" || true)"
+        if [[ "$body" == $'[Service]\nEnvironment=HOME=/var/lib/patch-gremlin' ]]; then
+            rm -f -- "$f"
+            ok "Removed the old HOME override file $f"
+        elif grep -qi 'HOME' "$f"; then
+            warn "Old HOME override may remain in $(printf '%q' "$f") - review it and remove the HOME setting by hand"
+        fi
+    done
+    rmdir "$dir" 2>/dev/null || true
+}
+
+# --update-only keeps the installed unit (it may carry event paths this run did
+# not load), so patch only the HOME line in place. Idempotent.
+refresh_unit_home() {
+    local unit tmp
+    unit="$(p /etc/systemd/system/update-notifier.service)"
+    [[ -f "$unit" && ! -L "$unit" ]] || return 0
+    tmp="$(mktemp "${unit}.tmp.XXXXXX")"
+    awk '/^Environment=HOME=/ {next}
+         /^ExecStart=/ && !done {print "Environment=HOME=/var/lib/patch-gremlin/home"; done=1}
+         {print}' "$unit" > "$tmp"
+    chmod 644 "$tmp"
+    mv -f -- "$tmp" "$unit"
 }
 
 install_units() {
@@ -600,6 +654,12 @@ After=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/update-notifier/env
+# ProtectHome=true hides /root and ProtectSystem=strict makes the rest
+# read-only, so the Doppler CLI cannot create its config directory under
+# the real home. Point HOME at a dedicated root-owned 0700 directory below the
+# state directory, which is already in ReadWritePaths (nothing is widened).
+# The service token comes from /etc/update-notifier/env.
+Environment=HOME=/var/lib/patch-gremlin/home
 ExecStart=/usr/local/bin/update-notifier.sh
 User=root
 TimeoutStartSec=300
@@ -621,6 +681,7 @@ LockPersonality=true
 ReadWritePaths=/var/lib/patch-gremlin /run
 EOF
     ok "Installed update-notifier.service"
+    migrate_home_dropin
 
     # The notifier is triggered by the upgrade unit finishing, NOT by a timer
     # racing it. Previously both fired at UPDATE_TIME with independent
@@ -890,13 +951,27 @@ verify_install() {
     local notifier
     notifier="$(p /usr/local/bin/update-notifier.sh)"
     if [[ -x "$notifier" ]]; then
-        if PATCH_GREMLIN_DRY_RUN=true \
+        local dry_out dry_rc=0 reason
+        # Read the staged env file (the notifier otherwise defaults to the real
+        # /etc path) and keep the output: it can name the cause. The notifier
+        # hands the Doppler token to the CLI itself, so nothing is exported here.
+        # env -u makes this check use only what the env file provides, exactly
+        # like a later manual run, instead of a token inherited from this shell.
+        # HOME is the unit's: a root-owned 0700 directory the service can write.
+        dry_out="$(env -u DOPPLER_TOKEN HOME="$(p /var/lib/patch-gremlin/home)" PATCH_GREMLIN_DRY_RUN=true \
+           PATCH_GREMLIN_ENV_FILE="$(p /etc/update-notifier/env)" \
            PATCH_GREMLIN_SECRETS_FILE="$(p /etc/update-notifier/secrets.conf)" \
            PATCH_GREMLIN_STATE_DIR="$(p /var/lib/patch-gremlin)" \
-           "$notifier" &>/dev/null; then
+           "$notifier" 2>&1)" || dry_rc=$?
+        if [[ "$dry_rc" -eq 0 ]]; then
             ok "Notification dry-run succeeded"
         else
-            warn "Notification dry-run failed - check secrets with: sudo $SCRIPT_DIR/diagnose-config.sh"
+            # One safe line: the last ERROR line plus the CLI's own message
+            # (the notifier already redacts it), any Doppler-token-shaped
+            # text removed, length capped.
+            reason="$(printf '%s\n' "$dry_out" | grep -E 'ERROR|Doppler said' | tail -n 2 \
+                | tr '\n' ';' | tr -cd '[:print:]' | tr -d '\134' | sed -E 's/dp\.[a-z]+\.[A-Za-z0-9]+/[REDACTED]/g' | cut -c1-300)"
+            warn "Notification dry-run failed (exit $dry_rc): ${reason:-no error line captured} - check secrets with: sudo $SCRIPT_DIR/diagnose-config.sh"
         fi
     fi
 
@@ -910,6 +985,30 @@ verify_install() {
         else
             warn "Secret environment file is mode $mode, expected 600"
         fi
+    fi
+    check_effective_home
+}
+
+# On a live host, confirm systemd's merged view of the unit (drop-ins included)
+# really uses the dedicated CLI home. The value must match exactly: systemd
+# prints the assignments separated by spaces and the last HOME wins, so the
+# last HOME assignment has to equal the expected one. No substring matching.
+# Skipped in a staged root unless the test suite forces it (stub systemctl).
+check_effective_home() {
+    local env_line part last_home="" parts=()
+    if [[ -n "$PG_ROOT" && "${PATCH_GREMLIN_TEST_SYSTEMCTL:-}" != "true" ]] ||
+       ! command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+    env_line="$(systemctl show -p Environment --value update-notifier.service 2>/dev/null || true)"
+    read -ra parts <<< "$env_line"
+    for part in ${parts[@]+"${parts[@]}"}; do
+        if [[ "$part" == HOME=* ]]; then last_home="$part"; fi
+    done
+    if [[ "$last_home" == "HOME=/var/lib/patch-gremlin/home" ]]; then
+        ok "update-notifier.service uses the private CLI home"
+    else
+        warn "update-notifier.service does not use HOME=/var/lib/patch-gremlin/home - check drop-ins with: systemctl cat update-notifier.service"
     fi
 }
 
@@ -971,8 +1070,11 @@ main() {
     if [[ "$update_only" == "true" ]]; then
         say "${GREEN}Refreshing installed components...${NC}"
         install_scripts
+        refresh_unit_home
+        migrate_home_dropin
         remove_legacy_artifacts
         run_systemctl daemon-reload
+        check_effective_home
         ok "Scripts and units refreshed; configuration untouched"
         exit 0
     fi
