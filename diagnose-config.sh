@@ -6,7 +6,7 @@
 
 set -uo pipefail
 
-PATCH_GREMLIN_VERSION="2.0.1"
+PATCH_GREMLIN_VERSION="2.0.2"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

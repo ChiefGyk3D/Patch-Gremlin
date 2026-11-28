@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-PATCH_GREMLIN_VERSION="2.0.1"
+PATCH_GREMLIN_VERSION="2.0.2"
 
 # ---------------------------------------------------------------------------
 # Tunables (environment overridable)

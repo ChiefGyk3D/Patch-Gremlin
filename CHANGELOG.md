@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-11-28
+
+### Fixed
+
+- Secret-manager mode now works under the hardened systemd unit and on manual
+  runs. The CLI uses a private, root-only home at `/var/lib/patch-gremlin/home`,
+  and the unit sets `HOME` to it.
+- Failures from the secret-manager CLI are reported as a safe one-line reason.
+- The installer checks the effective `HOME` exactly when it verifies the setup.
+
+### Security
+
+- The secret-manager token no longer reaches child processes of the notifier
+  under systemd (it is unexported) and is passed to the CLI only, per call.
+
+### Upgrading
+
+- Re-run the installer after upgrading. It removes the exact drop-in from the
+  documented hand-made workaround. Any other `HOME` override is left in place
+  and flagged with a warning for manual review.
+- A leftover `.doppler` folder in `/var/lib/patch-gremlin` from the old
+  workaround can be removed by hand.
+
 ## [2.0.1] - 2026-10-30
 
 ### Security hardening
@@ -165,6 +188,7 @@ the new secret layout and trigger wiring are applied.
 
 Initial releases. See the git history for details.
 
-[Unreleased]: https://github.com/ChiefGyk3D/Patch-Gremlin/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/ChiefGyk3D/Patch-Gremlin/compare/v2.0.2...HEAD
+[2.0.2]: https://github.com/ChiefGyk3D/Patch-Gremlin/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/ChiefGyk3D/Patch-Gremlin/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/ChiefGyk3D/Patch-Gremlin/releases/tag/v2.0.0
